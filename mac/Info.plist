@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDisplayName</key>
+	<string>Queue Watcher</string>
+	<key>CFBundleExecutable</key>
+	<string>QueueWatcher</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
+	<key>CFBundleIconName</key>
+	<string>AppIcon</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.kyler.queuewatcher</string>
+	<key>CFBundleName</key>
+	<string>Queue Watcher</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>3.1</string>
+	<key>CFBundleVersion</key>
+	<string>3.1</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>10.13</string>
+	<key>LSUIElement</key>
+	<true/>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>Queue Watcher checks Pokémon Center, Target and Walmart in Chrome.</string>
+</dict>
+</plist>

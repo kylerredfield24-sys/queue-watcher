@@ -1,0 +1,68 @@
+#!/bin/bash
+# Queue Watcher launcher.
+# 1) Builds the window app the first time (or after an update) with Apple's osacompile.
+# 2) Starts the watcher in the background if it isn't running.
+# 3) Opens the window. If the window app can't be made, opens the control panel in the browser.
+RES="$(cd "$(dirname "$0")/../Resources" && pwd)"
+export PATH="/opt/homebrew/bin:/usr/local/bin:/Library/Frameworks/Python.framework/Versions/Current/bin:/usr/bin:/bin:$PATH"
+PORT=8765
+SUPPORT="$HOME/Library/Application Support/QueueWatcher"
+PANEL="$SUPPORT/Queue Watcher Window.app"
+VERSION="$(cat "$RES/panel_version" 2>/dev/null)"
+mkdir -p "$SUPPORT"
+
+build_panel() {
+  local tmp="$SUPPORT/build-panel.app" plist
+  rm -rf "$tmp"
+  osacompile -l JavaScript -s -o "$tmp" "$RES/panel.js" >>"$SUPPORT/launcher.log" 2>&1 || return 1
+  plist="$tmp/Contents/Info.plist"
+  cp "$RES/AppIcon.icns" "$tmp/Contents/Resources/applet.icns"
+  plutil -replace CFBundleIdentifier -string "com.kyler.queuewatcher.panel" "$plist"
+  plutil -replace CFBundleName -string "Queue Watcher" "$plist"
+  plutil -replace CFBundleDisplayName -string "Queue Watcher" "$plist"
+  plutil -replace CFBundleShortVersionString -string "$VERSION" "$plist"
+  plutil -replace NSAppTransportSecurity -json '{"NSAllowsLocalNetworking":true,"NSAllowsArbitraryLoads":true}' "$plist"
+  plutil -replace NSAppleEventsUsageDescription -string "Queue Watcher controls Chrome to watch for queues." "$plist"
+  codesign --force --deep --sign - "$tmp" >>"$SUPPORT/launcher.log" 2>&1
+  rm -rf "$PANEL" && mv "$tmp" "$PANEL" || return 1
+  echo "$VERSION" > "$SUPPORT/panel_version"
+}
+
+if [ ! -d "$PANEL" ] || [ "$(cat "$SUPPORT/panel_version" 2>/dev/null)" != "$VERSION" ]; then
+  if ! build_panel; then
+    echo "$(date): window app build failed, using the browser instead" >>"$SUPPORT/launcher.log"
+    PANEL=""
+  fi
+fi
+
+APPVER="$(cat "$RES/app_version" 2>/dev/null)"
+RUNNING="$(curl -s -m 1 "http://127.0.0.1:$PORT/ping" 2>/dev/null)"
+if [ -n "$RUNNING" ] && [ "$RUNNING" != "ok $APPVER" ]; then
+  # An older copy is still running in the background. Stop it so the new one can start.
+  echo "$(date): replacing old running copy ($RUNNING)" >>"$SUPPORT/launcher.log"
+  pkill -f "[w]atcher_app[.]py" 2>/dev/null
+  for _ in $(seq 1 20); do
+    curl -s -m 1 "http://127.0.0.1:$PORT/ping" >/dev/null 2>&1 || break
+    sleep 0.25
+  done
+  pkill -9 -f "[w]atcher_app[.]py" 2>/dev/null
+  RUNNING=""
+fi
+
+if [ -z "$RUNNING" ]; then
+  if ! command -v python3 >/dev/null 2>&1; then
+    osascript -e 'display alert "Python 3 is needed" message "Install Python from python.org, then open Queue Watcher again."'
+    exit 1
+  fi
+  # Runs on its own (not tied to this launcher), so replacing the app later is never blocked.
+  QW_PANEL="$PANEL" nohup python3 "$RES/watcher_app.py" >>"$SUPPORT/app.log" 2>&1 </dev/null &
+  for _ in $(seq 1 40); do
+    curl -s -m 1 "http://127.0.0.1:$PORT/ping" >/dev/null 2>&1 && break
+    sleep 0.25
+  done
+fi
+
+if [ -n "$PANEL" ] && open "$PANEL"; then
+  exit 0
+fi
+open "http://127.0.0.1:$PORT/"
