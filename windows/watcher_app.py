@@ -23,7 +23,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs
 
 PORT = 8765
-VERSION = "3.2"   # the launcher compares this, and replaces an older copy that's still running
+VERSION = "3.3"   # the launcher compares this, and replaces an older copy that's still running
 PLATFORM = "mac"  # the Windows version switches this to "windows"
 TOKEN = secrets.token_hex(16)
 PAGE_LOAD_WAIT = 8
@@ -54,7 +54,8 @@ DEFAULTS = {
     "schedule_mode": "smart",
     "schedule_custom": {str(d): {"on": d < 5, "start": "09:45", "end": "14:30"} for d in range(7)},
     # Staying signed in
-    "pkc_background": True,          # Pokémon Center window opens minimized, pops up on a queue
+    "pkc_background": True,
+    "phone_control": True,           # Start / Stop / Status from the ntfy app          # Pokémon Center window opens minimized, pops up on a queue
     "check_signed_in": True,
     "auto_login": False,
     "login_url": "",
@@ -218,6 +219,7 @@ def clean_settings(new):
     s["target_watch"] = "\n".join(links[:10])
     s["msrp_limits"] = str(s["msrp_limits"]).strip()[:3000] or MSRP_DEFAULT
     s["pkc_background"] = s.get("pkc_background", True) in (True, "true", "on", 1, "1")
+    s["phone_control"] = s.get("phone_control", True) in (True, "true", "on", 1, "1")
     for key in ("check_signed_in", "auto_login", "login_saved"):
         s[key] = s[key] in (True, "true", "on", 1, "1")
     if s["login_url"] and not s["login_url"].startswith(("http://", "https://")):
@@ -3271,6 +3273,13 @@ try{document.documentElement.dataset.theme=localStorage.getItem("qw-theme")||"ne
       <li>Press <b>Send test ping</b>.</li>
     </ol>
     <div class="btns"><button class="plain" onclick="act('test')">Send test ping</button></div>
+    <h4 style="margin:16px 0 4px">Control it from your phone</h4>
+    <label class="check"><input type="checkbox" id="phone_control"> Let my phone Start, Stop and check Status</label>
+    <p class="sub">Every reply comes with <b>Start</b>, <b>Stop</b> and <b>Status</b> buttons. To get them any time, save these
+      links as bookmarks or home-screen shortcuts on your phone (tap one and Queue Watcher answers in ntfy within a few seconds):</p>
+    <div class="sub" id="phoneLinks"></div>
+    <div class="btns"><button class="plain" onclick="sendControls()">Send the buttons to my phone</button>
+      <span class="saved" id="phoneMsg"></span></div>
   </details>
 
   <details class="inner" id="discordBox">
@@ -3395,7 +3404,7 @@ async function save(){
   s.discord_enabled=document.getElementById("discord_enabled").checked;
   s.schedule_mode=schedMode;s.schedule_custom=week;
   s.check_signed_in=document.getElementById("check_signed_in").checked;
-  ["target_enabled","target_scan","target_open_page","walmart_enabled","walmart_msrp_only","checker_invisible","pkc_background"].forEach(k=>s[k]=document.getElementById(k).checked);
+  ["target_enabled","target_scan","target_open_page","walmart_enabled","walmart_msrp_only","checker_invisible","pkc_background","phone_control"].forEach(k=>s[k]=document.getElementById(k).checked);
   s.auto_login=document.getElementById("auto_login").checked;
   const r=await api("/save",s);fill(r.settings,true);
   ["saved","discordMsg"].forEach(id=>{const el=document.getElementById(id);el.textContent="Saved";
@@ -3464,7 +3473,8 @@ function fill(s,force){
   document.getElementById("discord_enabled").checked=!!s.discord_enabled;
   if(!force)fillSchedule(s);
   document.getElementById("check_signed_in").checked=!!s.check_signed_in;
-  ["target_enabled","target_scan","target_open_page","walmart_enabled","walmart_msrp_only","checker_invisible","pkc_background"].forEach(k=>document.getElementById(k).checked=!!s[k]);
+  ["target_enabled","target_scan","target_open_page","walmart_enabled","walmart_msrp_only","checker_invisible","pkc_background","phone_control"].forEach(k=>document.getElementById(k).checked=!!s[k]);
+  showPhoneLinks(s);
   document.getElementById("auto_login").checked=!!s.auto_login;
   showLogin(s);
   document.getElementById("topicShow").textContent=s.ntfy_topic;
@@ -3880,6 +3890,18 @@ async function refreshNews(){
 }
 loadNews();setInterval(loadNews,60000);
 
+/* ===== Phone controls ===== */
+function showPhoneLinks(s){
+  const box=document.getElementById("phoneLinks");box.innerHTML="";
+  if(!s.ntfy_topic){box.textContent="Add your ntfy topic below first.";return;}
+  ["start","stop","status"].forEach(w=>{const d=document.createElement("div");
+    const b=document.createElement("b");b.textContent=w[0].toUpperCase()+w.slice(1)+": ";
+    const c=document.createElement("code");c.textContent="https://ntfy.sh/"+s.ntfy_topic+"-cmd/publish?message="+w;
+    c.style.userSelect="all";c.style.wordBreak="break-all";d.append(b,c);box.append(d);});
+}
+async function sendControls(){const m=document.getElementById("phoneMsg");m.textContent="Sending...";
+  try{const r=await api("/phone_controls",{});m.textContent=r.msg;}catch(e){m.textContent="Couldn't send.";}}
+
 /* ===== Updates ===== */
 let upd={};
 function showUpdate(){
@@ -4187,6 +4209,13 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(200, json.dumps(pick_wallpaper()))
         elif self.path == "/pick_picture":
             return self.send(200, json.dumps(pick_picture()))
+        elif self.path == "/phone_controls":
+            s = load_settings()
+            if not s["ntfy_topic"]:
+                return self.send(200, json.dumps({"ok": False, "msg": "Add your ntfy topic first."}))
+            ok = phone_reply(s, "Queue Watcher controls", "Tap a button to control Queue Watcher.\n" + status_text())
+            return self.send(200, json.dumps({"ok": ok, "msg": "Sent! Check your phone." if ok
+                                              else "Couldn't reach ntfy. Try again."}))
         elif self.path == "/update_check":
             check_update()
             return self.send(200, json.dumps(update_state))
@@ -4198,6 +4227,109 @@ class Handler(BaseHTTPRequestHandler):
         else:
             return self.send(404, '{"error":"not found"}')
         self.send(200, self.status_json())
+
+
+# ---------------- phone controls (ntfy) ----------------
+# Send "start", "stop" or "status" to your private command topic (your topic + "-cmd") and Queue Watcher
+# does it and answers on your normal topic. Replies come with Start / Stop / Status buttons.
+NTFY_BASE = "https://ntfy.sh"
+CMD_EVERY = 10
+phone = {"since": None, "last": None}
+
+
+def cmd_topic(s):
+    return f"{s['ntfy_topic']}-cmd"
+
+
+def cmd_link(s, word):
+    return f"{NTFY_BASE}/{cmd_topic(s)}/publish?message={word}"
+
+
+def control_buttons(s):
+    return [{"action": "http", "label": label, "url": f"{NTFY_BASE}/{cmd_topic(s)}", "method": "POST",
+             "body": word, "clear": True} for label, word in (("Start", "start"), ("Stop", "stop"),
+                                                               ("Status", "status"))]
+
+
+def status_text():
+    with lock:
+        st = dict(state)
+    head = {"watching": "Watching Pokémon Center", "found": "QUEUE FOUND", "error": "Stopped",
+            "idle": "Not watching"}.get(st["status"], st["status"].title())
+    lines = [f"{head}. {st['message']}"]
+    if st["checks"]:
+        lines.append(f"{st['checks']} checks this run, last one at {st['last_check']}.")
+    try:
+        si = schedule_info()
+        if si["in_window"] and si["window_end"]:
+            lines.append(f"Drop-hours window ends {si['window_end']}.")
+        elif si["next"] and st["status"] != "watching":
+            lines.append(f"Next scheduled start: {si['next']}.")
+    except Exception:
+        pass
+    for name, c in checkers.items():
+        lines.append(f"{'Target' if name == 'target' else 'Walmart'}: {c.get('message') or c.get('status')}")
+    return "\n".join(lines)
+
+
+def phone_reply(s, title, msg):
+    """A normal (not urgent) ntfy message with Start / Stop / Status buttons."""
+    if not s["ntfy_topic"]:
+        return False
+    try:
+        req = urllib.request.Request(f"{NTFY_BASE}/{s['ntfy_topic']}", data=msg.encode("utf-8"), headers={
+            "Title": title, "Priority": "default", "Tags": "robot",
+            "Actions": json.dumps(control_buttons(s))})
+        fetch(req, timeout=10)
+        return True
+    except Exception as e:
+        log(f"Phone reply failed: {e}")
+        return False
+
+
+def phone_command(s, text):
+    word = text.strip().lower().strip("!. ")
+    log(f'Phone command: "{word[:20]}"')
+    if word in ("start", "go", "watch"):
+        if state["status"] == "watching":
+            return phone_reply(s, "Already watching", status_text())
+        manual_start()
+        time.sleep(8)                      # give it a moment to open the page and do its first check
+        return phone_reply(s, "Started from your phone", status_text())
+    if word in ("stop", "pause"):
+        stop_watching()
+        time.sleep(1)
+        return phone_reply(s, "Stopped from your phone", "Queue Watcher is NOT watching now. Tap Start to "
+                           "watch again.\n" + status_text())
+    if word in ("status", "?", "check", "how"):
+        return phone_reply(s, "Queue Watcher status", status_text())
+    return phone_reply(s, "Queue Watcher commands", "Send start, stop or status (or use the buttons).")
+
+
+def phone_control_loop():
+    """Check the command topic every few seconds. Commands sent while the app was closed are ignored."""
+    phone["since"] = str(int(time.time()))
+    while True:
+        s = load_settings()
+        if s["ntfy_topic"] and s["phone_control"]:
+            try:
+                url = f"{NTFY_BASE}/{cmd_topic(s)}/json?poll=1&since={phone['since']}"
+                with fetch(url, timeout=15) as r:
+                    lines = r.read().decode("utf-8", "replace").splitlines()
+                for line in lines:
+                    if not line.strip():
+                        continue
+                    m = json.loads(line)
+                    if m.get("event") != "message":
+                        continue
+                    phone["since"] = m.get("id") or phone["since"]
+                    if m.get("id") == phone["last"]:
+                        continue
+                    phone["last"] = m.get("id")
+                    threading.Thread(target=phone_command, args=(s, m.get("message", "")), daemon=True).start()
+            except Exception:
+                pass
+        time.sleep(CMD_EVERY)
 
 
 # ---------------- updates (the Update button) ----------------
@@ -4459,6 +4591,7 @@ def main():
     threading.Thread(target=scheduler_loop, daemon=True).start()
     threading.Thread(target=news_loop, daemon=True).start()
     threading.Thread(target=update_loop, daemon=True).start()
+    threading.Thread(target=phone_control_loop, daemon=True).start()
     for n in checkers:
         threading.Thread(target=checker_loop, args=(n,), daemon=True).start()
     write_window_key()

@@ -928,6 +928,7 @@ def main():
     threading.Thread(target=W.scheduler_loop, daemon=True).start()
     threading.Thread(target=W.news_loop, daemon=True).start()
     threading.Thread(target=W.update_loop, daemon=True).start()
+    threading.Thread(target=W.phone_control_loop, daemon=True).start()
     for n in W.checkers:
         threading.Thread(target=W.checker_loop, args=(n,), daemon=True).start()
     W.write_window_key()
