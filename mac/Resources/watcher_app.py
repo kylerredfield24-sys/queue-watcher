@@ -23,7 +23,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs
 
 PORT = 8765
-VERSION = "3.3"   # the launcher compares this, and replaces an older copy that's still running
+VERSION = "3.4"   # the launcher compares this, and replaces an older copy that's still running
 PLATFORM = "mac"  # the Windows version switches this to "windows"
 TOKEN = secrets.token_hex(16)
 PAGE_LOAD_WAIT = 8
@@ -964,13 +964,15 @@ def watch_hidden(s, stop, win, queue_words, block_words, headsup_words):
             wait = error_cooldown(word, err_streak)
             log(f'Backup reader got an error page ("{word}"). Resting {mins(wait)}, then trying again.')
             if err_streak == 0:
-                send_all(s, "Pokemon Center error page",
-                         f'Pokemon Center showed an error page ("{word}"). Queue Watcher is resting {mins(wait)}, '
-                         "then it keeps watching. Nothing to do.")
+                info_ping(s, "⚠️ Pokémon Center error page",
+                          f'It showed "{word}". Trying again at {short_time(time.time() + wait)} ({mins(wait)}).\n'
+                          "Nothing to do. You'll get a ping when it's watching again.")
             err_streak += 1
             if stop.wait(wait):
                 break
             continue
+        if err_streak:
+            info_ping(s, "✅ Watching again", "Pokémon Center loaded fine again. Back to checking for a queue.")
         err_streak = 0
         word = find_word(blob, headsup_words)
         if word:
@@ -1002,6 +1004,8 @@ def error_cooldown(word, streak):
 
 
 def mins(sec):
+    if sec < 60:
+        return f"{int(sec)} seconds"
     m = round(sec / 60)
     return f"{m} minute" + ("" if m == 1 else "s")
 
@@ -1012,14 +1016,16 @@ def recover_from_error(s, stop, win, word, streak):
     log(f'Pokémon Center showed an error page ("{word}"). Closing the tab, resting {mins(wait)}, '
         "then opening a fresh one.")
     set_state(message=f"Error page from Pokémon Center. Resting {mins(wait)}, then reopening. Still watching.")
+    back_at = short_time(time.time() + wait)
+    pinged = streak in (0, 3)
     if streak == 0:
-        send_all(s, "Pokemon Center error page",
-                 f'Pokemon Center showed an error page ("{word}"). Queue Watcher closed that tab and will open '
-                 f"a fresh one in {mins(wait)}. It's still watching, nothing to do.")
+        info_ping(s, "⚠️ Pokémon Center error page",
+                  f'It showed "{word}". Closed that tab; a fresh one opens at {back_at} ({mins(wait)}).\n'
+                  "Nothing to do. You'll get a ping when it's watching again.")
     elif streak == 3:
-        send_all(s, "Pokemon Center keeps erroring",
-                 "Pokemon Center keeps showing error pages. Queue Watcher is still retrying (every "
-                 f"{mins(error_cooldown(word, 9))} at most). It will ping you if a queue shows up.")
+        info_ping(s, "⚠️ Pokémon Center keeps erroring",
+                  f"Still retrying, waiting longer each time (up to {mins(error_cooldown(word, 9))}). "
+                  f"Next try at {back_at}. A queue still alerts you right away.")
     if win:
         close_tab(win)
     if stop.wait(wait):
@@ -1030,6 +1036,9 @@ def recover_from_error(s, stop, win, word, streak):
     if again:
         log("Opened a fresh Pokémon Center tab. Watching again.")
         set_state(message="Watching for a queue...")
+        if pinged:
+            info_ping(s, "✅ Watching again", "Opened a fresh Pokémon Center tab after the error. "
+                      "Back to checking for a queue.")
     return again
 
 
@@ -2257,7 +2266,7 @@ READ_JS = (
 checker_stop = threading.Event()
 checkers = {n: {"status": "off", "message": "Off", "last": None, "next": None, "items": [], "tab": None,
                 "paused_until": 0, "wake": threading.Event(), "alerted": set(), "block_pinged": False,
-                "lock": threading.Lock()}
+                "lock": threading.Lock(), "hidden_fails": 0, "tab_until": 0, "how": ""}
             for n in ("target", "walmart")}
 
 
@@ -2492,9 +2501,91 @@ def close_checker_tab(name):
         c["tab"] = None
 
 
+def background_tab(url):
+    """A new tab inside the minimized Pokémon Center window, so nothing pops up on screen.
+    Returns ((window, tab), own_window). Falls back to a minimized window of its own."""
+    pkc = find_tab(load_settings()["watch_url"])
+    if pkc:
+        out, _ = osa(f"""
+            {IF_CHROME}
+            tell application "Google Chrome"
+                repeat with x in windows
+                    if (id of x as text) is "{pkc[0]}" then
+                        if minimized of x is false then return "{NOT_FOUND}"
+                        set t to make new tab at end of tabs of x with properties {{URL:"{as_str(url)}"}}
+                        return (id of x as text) & "," & (id of t as text)
+                    end if
+                end repeat
+                return "{NOT_FOUND}"
+            end tell""", timeout=30)
+        parts = out.split(",")
+        if len(parts) == 2 and all(p.isdigit() for p in parts):
+            return (parts[0], parts[1]), False
+    if not chrome_running():
+        raise RuntimeError("Chrome isn't open, so it'll try again at the next check")
+    return None, True
+
+
+def read_in_tab(name, url):
+    """Read the page in real Chrome (sites that block hidden readers let real Chrome in)."""
+    tab, own = background_tab(url)
+    if own:
+        tab = checker_tab(name, url)
+    try:
+        wait_for_load(tab, checker_stop, min_wait=4, max_wait=30)
+        err = ""
+        for _ in range(3):
+            out, err = run_js(tab, READ_JS)
+            if out and not err:
+                try:
+                    d = json.loads(out)
+                    if d.get("cards") or d.get("text", "").strip():
+                        return d
+                except ValueError:
+                    pass
+            if checker_stop.wait(4):
+                break
+        if "allow javascript" in err.lower() or "apple events" in err.lower():
+            raise RuntimeError("Chrome is blocking it. Turn on View > Developer > Allow JavaScript from Apple Events")
+        raise RuntimeError("the page didn't load. It'll try again at the next check")
+    finally:
+        if own:
+            close_checker_tab(name)
+        else:
+            close_tab(tab)
+
+
 def load_page(name, url):
-    if load_settings()["checker_invisible"] and headless_available():
-        return read_headless(name, url)          # no windows, no tabs
+    c = checkers[name]
+    s = load_settings()
+    if not s["checker_invisible"]:
+        c["how"] = "its own minimized window"
+        return read_in_window(name, url)
+    if headless_available() and time.time() >= c["tab_until"]:
+        why = ""
+        try:
+            d = read_headless(name, url)
+            if CHECKER_BLOCK.search(d.get("title", "") + "\n" + d.get("text", "")[:3000]):
+                why = "the site blocked the hidden reader"
+            elif d.get("cards") or len(d.get("text", "")) > 200:
+                c["hidden_fails"] = 0
+                c["how"] = "hidden reader"
+                return d
+            else:
+                why = "the page came back empty"
+        except Exception as e:
+            why = str(e).split(". It'll")[0]
+        c["hidden_fails"] += 1
+        site = "Target" if name == "target" else "Walmart"
+        if c["hidden_fails"] >= 2:          # it keeps failing: use the background tab for the next 6 hours
+            c["tab_until"] = time.time() + 6 * 3600
+            c["hidden_fails"] = 0
+        log(f"{site}: hidden reader didn't work ({why}). Reading it in a background tab instead.")
+    c["how"] = "background tab"
+    return read_in_tab(name, url)
+
+
+def read_in_window(name, url):
     last = ""
     for attempt in range(2):
         tab = checker_tab(name, url)
@@ -4213,7 +4304,7 @@ class Handler(BaseHTTPRequestHandler):
             s = load_settings()
             if not s["ntfy_topic"]:
                 return self.send(200, json.dumps({"ok": False, "msg": "Add your ntfy topic first."}))
-            ok = phone_reply(s, "Queue Watcher controls", "Tap a button to control Queue Watcher.\n" + status_text())
+            ok = phone_reply(s, status_title(), status_text())
             return self.send(200, json.dumps({"ok": ok, "msg": "Sent! Check your phone." if ok
                                               else "Couldn't reach ntfy. Try again."}))
         elif self.path == "/update_check":
@@ -4251,39 +4342,88 @@ def control_buttons(s):
                                                                ("Status", "status"))]
 
 
+def short_time(t):
+    """'03:31:29 PM' or a timestamp -> '3:31 PM'"""
+    try:
+        if isinstance(t, (int, float)):
+            t = datetime.fromtimestamp(t).strftime("%I:%M %p")
+        t = str(t)
+        m = _re.match(r"0?(\d{1,2}):(\d\d)(?::\d\d)?\s*([AP]M)", t)
+        return f"{m.group(1)}:{m.group(2)} {m.group(3)}" if m else t
+    except Exception:
+        return ""
+
+
+CHECKER_ICON = {"on": "✅", "checking": "🔄", "error": "⚠️", "paused": "⏸️", "off": "➖", "waiting": "🌙"}
+
+
+def status_title():
+    st = state["status"]
+    msg = state["message"]
+    if st == "found":
+        return "🚨 Queue found!"
+    if st == "watching":
+        return "🟠 Resting after an error" if "Resting" in msg else "🟢 Watching Pokémon Center"
+    if st == "error":
+        return "🔴 Stopped"
+    return "⏸️ Not watching"
+
+
 def status_text():
     with lock:
         st = dict(state)
-    head = {"watching": "Watching Pokémon Center", "found": "QUEUE FOUND", "error": "Stopped",
-            "idle": "Not watching"}.get(st["status"], st["status"].title())
-    lines = [f"{head}. {st['message']}"]
-    if st["checks"]:
-        lines.append(f"{st['checks']} checks this run, last one at {st['last_check']}.")
+    lines = []
+    if st["status"] == "watching":
+        if "Resting" in st["message"]:
+            lines.append(st["message"].replace(" Still watching.", ""))
+        bits = []
+        if st["checks"]:
+            bits.append(f"{st['checks']} checks")
+        if st["last_check"]:
+            bits.append(f"last {short_time(st['last_check'])}")
+        lines.append("Pokémon Center: " + (" · ".join(bits) if bits else "starting up"))
+    elif st["status"] in ("error", "found"):
+        lines.append(st["message"].replace(" Press Start to try again.", ""))
     try:
         si = schedule_info()
         if si["in_window"] and si["window_end"]:
-            lines.append(f"Drop-hours window ends {si['window_end']}.")
+            lines.append(f"Drop hours until {si['window_end']}")
         elif si["next"] and st["status"] != "watching":
-            lines.append(f"Next scheduled start: {si['next']}.")
+            lines.append(f"Next auto-start: {si['next']}")
     except Exception:
         pass
     for name, c in checkers.items():
-        lines.append(f"{'Target' if name == 'target' else 'Walmart'}: {c.get('message') or c.get('status')}")
+        label = "Target" if name == "target" else "Walmart"
+        if c["status"] == "off":
+            continue
+        msg = (c.get("message") or c["status"]).replace("Problem: ", "")
+        msg = msg.split(". It'll")[0]
+        if c["status"] == "on" and c.get("last"):
+            msg += f" · {short_time(c['last'])}"
+        lines.append(f"{CHECKER_ICON.get(c['status'], '•')} {label}: {msg}")
     return "\n".join(lines)
 
 
+def info_ping(s, title, msg):
+    """A calm heads-up: phone (with Start/Stop/Status buttons) + this computer. Never Discord."""
+    phone_reply(s, title, msg)
+    notify_mac(msg)
+
+
 def phone_reply(s, title, msg):
-    """A normal (not urgent) ntfy message with Start / Stop / Status buttons."""
+    """A normal (not urgent) ntfy message with Start / Stop / Status buttons.
+    Sent as JSON so emoji and accents in the title come through."""
     if not s["ntfy_topic"]:
         return False
     try:
-        req = urllib.request.Request(f"{NTFY_BASE}/{s['ntfy_topic']}", data=msg.encode("utf-8"), headers={
-            "Title": title, "Priority": "default", "Tags": "robot",
-            "Actions": json.dumps(control_buttons(s))})
+        body = {"topic": s["ntfy_topic"], "title": title, "message": msg, "priority": 3,
+                "actions": control_buttons(s)}
+        req = urllib.request.Request(f"{NTFY_BASE}/", data=json.dumps(body).encode("utf-8"),
+                                     headers={"Content-Type": "application/json"})
         fetch(req, timeout=10)
         return True
     except Exception as e:
-        log(f"Phone reply failed: {e}")
+        log(f"Phone message failed: {e}")
         return False
 
 
@@ -4292,18 +4432,18 @@ def phone_command(s, text):
     log(f'Phone command: "{word[:20]}"')
     if word in ("start", "go", "watch"):
         if state["status"] == "watching":
-            return phone_reply(s, "Already watching", status_text())
+            return phone_reply(s, "👍 Already watching", status_text())
         manual_start()
         time.sleep(8)                      # give it a moment to open the page and do its first check
-        return phone_reply(s, "Started from your phone", status_text())
+        return phone_reply(s, "▶️ Started", status_text())
     if word in ("stop", "pause"):
         stop_watching()
         time.sleep(1)
-        return phone_reply(s, "Stopped from your phone", "Queue Watcher is NOT watching now. Tap Start to "
-                           "watch again.\n" + status_text())
+        return phone_reply(s, "⏹️ Stopped", "Not watching Pokémon Center. Tap Start to watch again.\n"
+                           + status_text())
     if word in ("status", "?", "check", "how"):
-        return phone_reply(s, "Queue Watcher status", status_text())
-    return phone_reply(s, "Queue Watcher commands", "Send start, stop or status (or use the buttons).")
+        return phone_reply(s, status_title(), status_text())
+    return phone_reply(s, "Queue Watcher", "Use the buttons, or send start, stop or status.")
 
 
 def phone_control_loop():

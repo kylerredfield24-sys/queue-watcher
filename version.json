@@ -1,21 +1,21 @@
 {
-  "version": "3.3",
-  "notes": "Phone controls: Start, Stop and Status from the ntfy app (buttons on every reply, or bookmark links). Error pages no longer stop the watcher.",
+  "version": "3.4",
+  "notes": "Cleaner phone notifications. A 'Watching again' ping after an error page. Walmart: if the hidden reader is blocked, it reads Walmart in a background tab inside the minimized Pok\u00e9mon Center window.",
   "files": {
     "mac": {
-      "Resources/watcher_app.py": "34a2ebeff06d5651891156526b29c5505f52f05c295c074608431baa8b4f457c",
+      "Resources/watcher_app.py": "445f25fbc4f30b5ebec20b9f2be9fd40b43634935c897a3d8683f515c2187d9e",
       "Resources/panel.js": "c288eeb22be8c81c774f4d99c7767a72ab8f3da39dd839373f5b7398ad495dec",
-      "Resources/app_version": "8b4feb2571a161ee126fd279ba612bfa883f66762b18ef21c1557ebcd3f841c2",
+      "Resources/app_version": "0d4aa48310ee50a82c9df0a9d119954e8a516396da9eaa3413111ea173be7e8f",
       "Resources/panel_version": "5d43fc4b98938fad12641b4620e757b00d80de17a0715bf7ed816b33ac41df47",
       "Resources/AppIcon.icns": "bd9ce68547b1a82b729839192efef6c0e789c9eba005e9c724d2f11119fde49e",
       "MacOS/QueueWatcher": "7addd2f46526e2a41d73192fbadd6a01aa350afd24fcef51a698b7048f40738b",
-      "Info.plist": "0a6abf5ac0d2ef7e86fd9af9a5b6cdcfb97658922a62d516da6e37b26b324a07"
+      "Info.plist": "880ecdacdc340f13ef8e971950d45df91bf6bf4ce3c1e613ef1a8705a22ece4f"
     },
     "windows": {
-      "watcher_app.py": "e6a62df0dfa4191d54c70d63d2a6007e8d8b21c400bcc661e24ac0183a2380fb",
-      "winplat.py": "a300bc9377ba4d5f787284737be4cda011a94ebad1895525bfec29a9fa1b521a",
+      "watcher_app.py": "9175666969fcadc42dadd92a0018b819ad205f9ac2bb5d58029f9926052455c0",
+      "winplat.py": "d8cca2c7d4ad9872b3019b1aea13bdd0b969f331c0a206794da325228794a5c4",
       "launcher.pyw": "eea46c509101969b91a037281601407d79cec8696798ab7c1773e1f95de4309b",
-      "app_version": "8b4feb2571a161ee126fd279ba612bfa883f66762b18ef21c1557ebcd3f841c2",
+      "app_version": "0d4aa48310ee50a82c9df0a9d119954e8a516396da9eaa3413111ea173be7e8f",
       "QueueWatcher.ico": "8551351f1c62e2e0a12f2c69eed5d6232732b574b914b082ea60db9b673f4701"
     }
   }

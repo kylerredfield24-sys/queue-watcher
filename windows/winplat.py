@@ -494,6 +494,17 @@ def checker_tab(name, url):
     return win
 
 
+def background_tab(url):
+    """A background tab in Queue Watcher's Chrome (nothing pops up). Its own minimized window if Chrome is closed."""
+    if page_targets() is None:
+        return None, True
+    try:
+        tid = browser_call("Target.createTarget", {"url": url, "background": True})["targetId"]
+        return ("cdp", tid), False
+    except Exception:
+        return None, True
+
+
 def close_checker_tab(name):
     c = W.checkers[name]
     if c["tab"]:
@@ -947,7 +958,7 @@ def main():
 
 # ---------------- hook everything in ----------------
 REPLACE = ["chrome_running", "tab_do", "tab_get", "find_tab", "open_window", "window_exists", "reload_tab", "close_tab",
-           "go_to", "run_js", "wait_for_load", "read_page", "js_error_help", "bring_to_front", "checker_tab",
+           "go_to", "run_js", "wait_for_load", "read_page", "js_error_help", "bring_to_front", "checker_tab", "background_tab",
            "close_checker_tab", "open_link", "open_in_chrome", "chrome_user_agent", "dump_dom", "restart_app",
            "kc_save", "kc_load", "kc_delete", "notify_mac", "choose_file", "sips", "pick_picture",
            "keep_awake", "watch", "panel_running", "shutdown", "osa", "main"]
