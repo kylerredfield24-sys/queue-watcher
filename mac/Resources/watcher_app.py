@@ -23,7 +23,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs
 
 PORT = 8765
-VERSION = "3.1"   # the launcher compares this, and replaces an older copy that's still running
+VERSION = "3.2"   # the launcher compares this, and replaces an older copy that's still running
 PLATFORM = "mac"  # the Windows version switches this to "windows"
 TOKEN = secrets.token_hex(16)
 PAGE_LOAD_WAIT = 8
@@ -602,6 +602,10 @@ def reload_tab(win):
     tab_do(win, "reload TAB")
 
 
+def close_tab(win):
+    tab_do(win, "close TAB", timeout=10)
+
+
 def go_to(win, url):
     tab_do(win, f'set URL of TAB to "{as_str(url)}"')
 
@@ -921,7 +925,7 @@ def watch_hidden(s, stop, win, queue_words, block_words, headsup_words):
     log("Chrome blocks reading pages, so switching to backup mode (hidden reader).")
     set_state(status="watching", message="Watching for a queue (backup mode)...", js_warning=True,
               js_help=BACKUP_HELP)
-    misses, last_headsup = 0, 0
+    misses, last_headsup, err_streak = 0, 0, 0
     while not stop.is_set():
         try:
             d = read_headless("pkc", s["watch_url"])
@@ -955,9 +959,17 @@ def watch_hidden(s, stop, win, queue_words, block_words, headsup_words):
             return
         word = find_word(blob, block_words)
         if word:
-            stopped_unexpectedly(s, f'the backup reader got a block/error page ("{word}"). '
-                                    "It paused so it doesn't make things worse.")
-            return
+            wait = error_cooldown(word, err_streak)
+            log(f'Backup reader got an error page ("{word}"). Resting {mins(wait)}, then trying again.')
+            if err_streak == 0:
+                send_all(s, "Pokemon Center error page",
+                         f'Pokemon Center showed an error page ("{word}"). Queue Watcher is resting {mins(wait)}, '
+                         "then it keeps watching. Nothing to do.")
+            err_streak += 1
+            if stop.wait(wait):
+                break
+            continue
+        err_streak = 0
         word = find_word(blob, headsup_words)
         if word:
             log(f'Heads up: site says "{word}". Still watching.')
@@ -972,6 +984,51 @@ def watch_hidden(s, stop, win, queue_words, block_words, headsup_words):
             break
     set_state(status="idle", message="Stopped. Press Start to watch again.")
     log("Stopped by you.")
+
+
+# Error / block pages: never give up. Close the tab, rest (so it doesn't look like a bot hammering
+# the site, which is what gets soft bans), then open a fresh tab and keep watching.
+# The rest gets longer if it keeps happening, and resets after a normal check.
+HARD_BLOCK = ("incapsula incident", "access denied", "are you a robot", "pardon our interruption")
+SOFT_COOLDOWN = (120, 300, 600, 1200, 1800)        # 2, 5, 10, 20, then 30 minutes
+HARD_COOLDOWN = (600, 1200, 1800)                  # bot checks: 10, 20, then 30 minutes
+
+
+def error_cooldown(word, streak):
+    steps = HARD_COOLDOWN if word in HARD_BLOCK else SOFT_COOLDOWN
+    return steps[min(streak, len(steps) - 1)]
+
+
+def mins(sec):
+    m = round(sec / 60)
+    return f"{m} minute" + ("" if m == 1 else "s")
+
+
+def recover_from_error(s, stop, win, word, streak):
+    """Close the error tab, rest, open a fresh one. Returns the new tab (None if stopped/couldn't)."""
+    wait = error_cooldown(word, streak)
+    log(f'Pokémon Center showed an error page ("{word}"). Closing the tab, resting {mins(wait)}, '
+        "then opening a fresh one.")
+    set_state(message=f"Error page from Pokémon Center. Resting {mins(wait)}, then reopening. Still watching.")
+    if streak == 0:
+        send_all(s, "Pokemon Center error page",
+                 f'Pokemon Center showed an error page ("{word}"). Queue Watcher closed that tab and will open '
+                 f"a fresh one in {mins(wait)}. It's still watching, nothing to do.")
+    elif streak == 3:
+        send_all(s, "Pokemon Center keeps erroring",
+                 "Pokemon Center keeps showing error pages. Queue Watcher is still retrying (every "
+                 f"{mins(error_cooldown(word, 9))} at most). It will ping you if a queue shows up.")
+    if win:
+        close_tab(win)
+    if stop.wait(wait):
+        return None
+    again = find_tab(s["watch_url"])
+    if not again:
+        again, _ = open_window(s["watch_url"])
+    if again:
+        log("Opened a fresh Pokémon Center tab. Watching again.")
+        set_state(message="Watching for a queue...")
+    return again
 
 
 def watch(s, stop):
@@ -1003,6 +1060,7 @@ def watch(s, stop):
         js_fails = 0
         fails = 0
         login_checked = False
+        error_streak = 0
 
         while not stop.is_set():
             wait_for_load(win, stop)
@@ -1076,11 +1134,16 @@ def watch(s, stop):
 
                 word = find_word(blob, block_words)
                 if word:
-                    stopped_unexpectedly(
-                        s, f'Pokemon Center showed a block/error page ("{word}"). '
-                           "Refreshing more could make it worse, so it paused.")
-                    bring_to_front(win)
-                    return
+                    again = recover_from_error(s, stop, win, word, error_streak)
+                    error_streak += 1
+                    if stop.is_set():
+                        break
+                    if not again:
+                        stopped_unexpectedly(s, "couldn't open a fresh Pokémon Center tab after an error page.")
+                        return
+                    win = again
+                    continue
+                error_streak = 0
 
                 word = find_word(blob, headsup_words)
                 if word:

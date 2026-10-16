@@ -387,6 +387,13 @@ def reload_tab(win):
         pass
 
 
+def close_tab(win):
+    try:
+        browser_call("Target.closeTarget", {"targetId": win[1]}, timeout=10)
+    except Exception:
+        pass
+
+
 def go_to(win, url):
     try:
         page_call(win, "Page.navigate", {"url": url})
@@ -938,7 +945,7 @@ def main():
 
 
 # ---------------- hook everything in ----------------
-REPLACE = ["chrome_running", "tab_do", "tab_get", "find_tab", "open_window", "window_exists", "reload_tab",
+REPLACE = ["chrome_running", "tab_do", "tab_get", "find_tab", "open_window", "window_exists", "reload_tab", "close_tab",
            "go_to", "run_js", "wait_for_load", "read_page", "js_error_help", "bring_to_front", "checker_tab",
            "close_checker_tab", "open_link", "open_in_chrome", "chrome_user_agent", "dump_dom", "restart_app",
            "kc_save", "kc_load", "kc_delete", "notify_mac", "choose_file", "sips", "pick_picture",
