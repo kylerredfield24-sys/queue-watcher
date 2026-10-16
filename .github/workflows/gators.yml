@@ -1,0 +1,35 @@
+name: Gator's restock watch
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"      # every 5 minutes (GitHub sometimes runs it a little late)
+  workflow_dispatch: {}          # "Run workflow" button for a manual check
+
+concurrency:
+  group: gators-watch
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: gators-bot
+      - name: Remember what was in stock last time
+        uses: actions/cache/restore@v4
+        with:
+          path: gators_state.json
+          key: gators-state-${{ github.run_id }}
+          restore-keys: gators-state-
+      - name: Check Gator's Card Den
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+        run: python3 gators-bot/gators_bot.py
+      - name: Save what's in stock now
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: gators_state.json
+          key: gators-state-${{ github.run_id }}
