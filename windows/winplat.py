@@ -907,6 +907,46 @@ def message_box(title, text):
     print(f"{title}: {text}")
 
 
+STATS_PS = r"""
+$ErrorActionPreference = 'SilentlyContinue'
+$cpu = (Get-CimInstance Win32_Processor | Measure-Object -Property LoadPercentage -Average).Average
+$os = Get-CimInstance Win32_OperatingSystem
+$free = if ($os.TotalVisibleMemorySize) { [math]::Round(100 * $os.FreePhysicalMemory / $os.TotalVisibleMemorySize) } else { $null }
+$t = $null
+$z = Get-CimInstance Win32_PerfFormattedData_Counters_ThermalZoneInformation
+if ($z) { $k = ($z | Measure-Object -Property HighPrecisionTemperature -Maximum).Maximum; if ($k -gt 0) { $t = [math]::Round($k / 10 - 273.15, 1) } }
+$killed = 0
+Get-CimInstance Win32_Process -Filter "Name='chrome.exe'" | Where-Object {
+  $_.CommandLine -like '*checker-chrome-*' -and $_.CommandLine -like '*--headless*' -and $_.CreationDate -lt (Get-Date).AddMinutes(-3)
+} | ForEach-Object { Stop-Process -Id $_.ProcessId -Force; $killed++ }
+@{ cpu = $cpu; mem_free = $free; temp_c = $t; killed = $killed } | ConvertTo-Json -Compress
+"""
+_last_killed = {"n": 0}
+
+
+def read_stats():
+    """CPU, memory and (if Windows reports it) temperature, in one quick hidden PowerShell call."""
+    out = {"thermal": None, "cpu": None, "mem_free": None, "temp_c": None}
+    if not IS_WIN:
+        return out
+    ok, txt = powershell(STATS_PS, timeout=40)
+    try:
+        d = json.loads(txt.strip().splitlines()[-1])
+        out["cpu"] = round(d["cpu"]) if d.get("cpu") is not None else None
+        out["mem_free"] = d.get("mem_free")
+        t = d.get("temp_c")
+        out["temp_c"] = t if t and 10 < t < 130 else None      # ignore nonsense readings
+        _last_killed["n"] = int(d.get("killed") or 0)
+    except Exception:
+        pass
+    return out
+
+
+def clean_stray_chrome():
+    n, _last_killed["n"] = _last_killed["n"], 0
+    return n
+
+
 def restart_app():
     """After an update: run the launcher, which closes this copy and opens the new one."""
     time.sleep(1)
@@ -940,6 +980,7 @@ def main():
     threading.Thread(target=W.news_loop, daemon=True).start()
     threading.Thread(target=W.update_loop, daemon=True).start()
     threading.Thread(target=W.phone_control_loop, daemon=True).start()
+    threading.Thread(target=W.health_loop, daemon=True).start()
     for n in W.checkers:
         threading.Thread(target=W.checker_loop, args=(n,), daemon=True).start()
     W.write_window_key()
@@ -961,7 +1002,7 @@ REPLACE = ["chrome_running", "tab_do", "tab_get", "find_tab", "open_window", "wi
            "go_to", "run_js", "wait_for_load", "read_page", "js_error_help", "bring_to_front", "checker_tab", "background_tab",
            "close_checker_tab", "open_link", "open_in_chrome", "chrome_user_agent", "dump_dom", "restart_app",
            "kc_save", "kc_load", "kc_delete", "notify_mac", "choose_file", "sips", "pick_picture",
-           "keep_awake", "watch", "panel_running", "shutdown", "osa", "main"]
+           "keep_awake", "watch", "panel_running", "shutdown", "osa", "main", "read_stats", "clean_stray_chrome"]
 
 
 def install(g):
@@ -972,4 +1013,5 @@ def install(g):
     for name in REPLACE:
         g[name] = globals()[name]
     g["CHROME_BIN"] = find_chrome()
+    g["HEALTH_EVERY"] = 120          # the Windows check uses PowerShell, so run it a bit less often
     g["PLATFORM"] = "windows"

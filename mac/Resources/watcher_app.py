@@ -23,7 +23,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs
 
 PORT = 8765
-VERSION = "3.6"   # the launcher compares this, and replaces an older copy that's still running
+VERSION = "3.7"   # the launcher compares this, and replaces an older copy that's still running
 PLATFORM = "mac"  # the Windows version switches this to "windows"
 TOKEN = secrets.token_hex(16)
 PAGE_LOAD_WAIT = 8
@@ -55,7 +55,8 @@ DEFAULTS = {
     "schedule_custom": {str(d): {"on": d < 5, "start": "09:45", "end": "14:30"} for d in range(7)},
     # Staying signed in
     "pkc_background": True,
-    "brand_v1": False,               # set once the Discord bot got the Guardian Monitor name + picture
+    "brand_v1": False,
+    "health_mode": "protect",        # protect (ease off / pause when hot) | warn (just tell me) | off               # set once the Discord bot got the Guardian Monitor name + picture
     "phone_control": True,           # Start / Stop / Status from the ntfy app          # Pokémon Center window opens minimized, pops up on a queue
     "check_signed_in": True,
     "auto_login": False,
@@ -126,28 +127,47 @@ watcher_thread = None
 
 
 # ---------------- settings ----------------
+settings_lock = threading.RLock()
+
+
 def load_settings():
     s = dict(DEFAULTS)
-    try:
-        with open(SETTINGS_FILE) as f:
-            s.update(json.load(f))
-    except Exception:
-        pass
+    with settings_lock:
+        for attempt in range(3):
+            try:
+                with open(SETTINGS_FILE) as f:
+                    s.update(json.load(f))
+                break
+            except FileNotFoundError:
+                break
+            except Exception:                 # damaged file (saves are atomic, so it isn't a half-write):
+                time.sleep(0.05)              # start fresh from the defaults below
     if not str(s.get("msrp_limits", "")).strip() or s.get("msrp_limits") in OLD_MSRP_DEFAULTS:
         s["msrp_limits"] = MSRP_DEFAULT
     for key, olds in OLD_DEFAULTS.items():   # upgrade untouched old defaults
         if s.get(key) in olds:
             s[key] = DEFAULTS[key]
     if not s.get("ntfy_topic"):
-        s["ntfy_topic"] = "pkc-queue-" + secrets.token_hex(4)
-        save_settings(s)
+        with settings_lock:
+            try:                              # someone else may have just saved one
+                with open(SETTINGS_FILE) as f:
+                    cur = json.load(f).get("ntfy_topic")
+            except Exception:
+                cur = None
+            s["ntfy_topic"] = cur or "pkc-queue-" + secrets.token_hex(4)
+            if not cur:
+                save_settings(s)
     return s
 
 
 def save_settings(s):
+    """Save atomically (write a temp file, then swap it in), so a reader never sees a half-written file."""
     os.makedirs(DATA_DIR, exist_ok=True)
-    with open(SETTINGS_FILE, "w") as f:
-        json.dump(s, f, indent=2)
+    with settings_lock:
+        tmp = SETTINGS_FILE + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(s, f, indent=2)
+        os.replace(tmp, SETTINGS_FILE)
 
 
 def clean_time(t, fallback):
@@ -221,6 +241,8 @@ def clean_settings(new):
     s["msrp_limits"] = str(s["msrp_limits"]).strip()[:3000] or MSRP_DEFAULT
     s["pkc_background"] = s.get("pkc_background", True) in (True, "true", "on", 1, "1")
     s["brand_v1"] = s.get("brand_v1") in (True, "true", 1, "1")
+    if s.get("health_mode") not in ("protect", "warn", "off"):
+        s["health_mode"] = "protect"
     s["phone_control"] = s.get("phone_control", True) in (True, "true", "on", 1, "1")
     for key in ("check_signed_in", "auto_login", "login_saved"):
         s[key] = s[key] in (True, "true", "on", 1, "1")
@@ -1174,7 +1196,7 @@ def watch(s, stop):
                     login_checked = True
                     check_sign_in(win, s, text, stop)
 
-            wait = random.randint(s["min_wait"], s["max_wait"])
+            wait = int(random.randint(s["min_wait"], s["max_wait"]) * (2 if health["level"] in ("warm", "hot") else 1))
             if stop.wait(wait):
                 break
             if window_exists(win) is False:
@@ -2800,6 +2822,10 @@ def checker_loop(name):
                 c["wake"].clear()
                 continue
             now = time.time()
+            if health_paused():
+                c.update(status="paused", message="Paused to let your computer cool down")
+                c["wake"].wait(60)
+                continue
             if now < c["paused_until"]:
                 c.update(status="paused",
                          message=f"Paused: the site showed a robot check. Trying again at "
@@ -2840,7 +2866,7 @@ def checker_loop(name):
                     log(f"{name.title()} checker problem: {e}")
                 c["last"] = time.time()
                 every = max(2 if name == "target" else 10, int(s[f"{name}_every"]))
-                c["next"] = time.time() + every * 60 * random.uniform(0.9, 1.15)
+                c["next"] = time.time() + every * 60 * random.uniform(0.9, 1.15) * health_factor()
             c["wake"].wait(10)
         except Exception as e:
             log(f"{name.title()} checker error: {e}")
@@ -2957,6 +2983,8 @@ def scheduler_tick():
     if win:
         # Start once per window. If it stops (queue found, block page, or you pressed Stop),
         # it waits for the next window, so it never refreshes you out of a queue.
+        if health["level"] == "critical":        # paused to let the computer cool down
+            return
         if not running and sched["started_key"] != win[0]:
             sched["started_key"] = win[0]
             log(f"Schedule: starting (until {nice_time(win[1])}).")
@@ -3166,6 +3194,14 @@ button.small{padding:6px 12px;font-size:13px}
 .ntag.st-predicted{color:var(--found);border-color:color-mix(in srgb,var(--found) 45%,transparent)}
 .nwhen{font-size:13px;color:var(--muted);margin-top:2px}
 .nd.vague b{font-size:12px}
+.hgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:10px}
+@media(max-width:560px){.hgrid{grid-template-columns:repeat(2,1fr)}}
+.htile{border:1px solid var(--line);border-radius:10px;padding:8px 10px}
+.htile small{display:block;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+.htile b{font-size:18px}
+.seg{display:flex;gap:6px;flex-wrap:wrap;margin-top:4px}
+.seg button{padding:6px 12px;border-radius:999px;border:1px solid var(--line);background:transparent;color:var(--muted);font-weight:600;cursor:pointer}
+.seg button.sel{color:var(--text);border-color:var(--accent)}
 .cat{font-weight:600}
 .cat-pkc{color:var(--found)}.cat-store{color:var(--go)}.cat-set{color:var(--accent)}
 .sec{margin-top:16px;font-size:13px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
@@ -3220,6 +3256,7 @@ try{document.documentElement.dataset.theme=localStorage.getItem("qw-theme")||"ne
   <div class="status"><div class="dot"></div>
     <div><div class="big" id="msg">Loading...</div><div class="sub" id="sub"></div></div></div>
   <div class="schedline" id="schedLine"></div>
+  <div class="sub" id="healthLine" title="Guardian Monitor checks your computer's temperature, processor and memory every minute and eases off if it's working too hard."></div>
   <div class="btns">
     <button class="start" id="startBtn" onclick="act('start')">Start now</button>
     <button class="stopb" id="stopBtn" onclick="act('stop')">Stop</button>
@@ -3230,6 +3267,24 @@ try{document.documentElement.dataset.theme=localStorage.getItem("qw-theme")||"ne
     <button class="start" style="background:var(--found);color:#1b1d22" onclick="act('ack')">I'm on it (stop the reminders)</button>
   </div>
   <div class="warn" id="jsWarn"></div>
+</div>
+
+<!-- ===== Computer health ===== -->
+<div class="card" id="healthCard">
+  <div class="cardhead"><span class="cardtitle" style="margin:0">Computer health</span>
+    <span class="sub" id="hcChecked"></span></div>
+  <div class="hgrid">
+    <div class="htile"><small>Temperature</small><b id="hcTemp">–</b></div>
+    <div class="htile"><small>Processor</small><b id="hcCpu">–</b></div>
+    <div class="htile"><small>Memory free</small><b id="hcMem">–</b></div>
+    <div class="htile"><small>Stuck Chrome closed</small><b id="hcClean">0</b></div>
+  </div>
+  <div class="sub" id="hcStatus" style="margin-top:8px"></div>
+  <label style="margin-top:12px">Safety</label>
+  <div class="seg" id="hcMode">
+    <button data-m="protect">Protect</button><button data-m="warn">Warn only</button><button data-m="off">Off</button>
+  </div>
+  <div class="sub" id="hcModeHelp"></div>
 </div>
 
 <!-- ===== Releases & drops ===== -->
@@ -3669,6 +3724,8 @@ async function refresh(){
   FX.mode(d.status);
   renderCheckers(d.checkers);
   document.getElementById("schedLine").textContent=scheduleText(d);
+  if(d.health){document.getElementById("healthLine").textContent=d.health.line+(d.health.level!=="ok"&&d.health.note?": "+d.health.note:"");
+    renderHealth(d.health,d.settings.health_mode);}
   const tag=document.getElementById("sysTag");
   tag.textContent={watching:"Scanning",found:"Queue live",error:"Attention",idle:"Idle"}[d.status]||d.status;
   tag.className="tag"+(d.status==="watching"?" on":"");
@@ -4005,6 +4062,24 @@ async function refreshNews(){
 }
 loadNews();setInterval(loadNews,60000);
 
+/* ===== Computer health ===== */
+const HC_HELP={protect:"Protect: if the computer runs hot or out of memory, Guardian Monitor slows down, then pauses Target/Walmart, and if it gets very hot it pauses everything until it has cooled down for 10 minutes. You get a ping each time.",
+  warn:"Warn only: you get a ping if the computer runs hot or out of memory, but nothing is slowed down or paused.",
+  off:"Off: it still shows the readings here, but never pings, slows down or pauses."};
+function renderHealth(h,mode){
+  const T=h.temp_c!=null?Math.round(h.temp_c)+"°C":(h.thermal?h.thermal[0].toUpperCase()+h.thermal.slice(1):"n/a");
+  document.getElementById("hcTemp").textContent=T;
+  document.getElementById("hcCpu").textContent=h.cpu!=null?h.cpu+"%":"n/a";
+  document.getElementById("hcMem").textContent=h.mem_free!=null?h.mem_free+"%":"n/a";
+  document.getElementById("hcClean").textContent=h.cleaned||0;
+  document.getElementById("hcStatus").textContent=h.line+(h.level!=="ok"&&h.note?": "+h.note:"");
+  document.getElementById("hcChecked").textContent=h.checked?"checked "+ago(new Date(h.checked*1000).toISOString()):"first check in a moment";
+  document.querySelectorAll("#hcMode button").forEach(b=>b.classList.toggle("sel",b.dataset.m===mode));
+  document.getElementById("hcModeHelp").textContent=HC_HELP[mode]||"";
+}
+document.querySelectorAll("#hcMode button").forEach(b=>b.onclick=async()=>{
+  await api("/save",{health_mode:b.dataset.m});refresh();});
+
 /* ===== Phone controls ===== */
 function showPhoneLinks(s){
   const box=document.getElementById("phoneLinks");box.innerHTML="";
@@ -4115,6 +4190,10 @@ class Handler(BaseHTTPRequestHandler):
         d["alerting"] = bool(watcher_thread and watcher_thread.is_alive()) and not ack_event.is_set()
         d["schedule"] = schedule_info()
         d["checkers"] = checkers_info()
+        d["health"] = {"line": health_line(), "level": health["level"], "note": health["note"],
+                       "thermal": health["thermal"], "temp_c": health["temp_c"], "cpu": health["cpu"],
+                       "mem_free": health["mem_free"], "cleaned": health["cleaned"], "checked": health.get("checked"),
+                       "busy_minutes": health["busy_streak"]}
         return json.dumps(d)
 
     def serve_wallpaper(self):
@@ -4448,6 +4527,7 @@ def status_text():
             lines.append(f"Next auto-start: {si['next']}")
     except Exception:
         pass
+    lines.append(health_line())
     for name, c in checkers.items():
         label = "Target" if name == "target" else "Walmart"
         if c["status"] == "off":
@@ -4534,6 +4614,207 @@ def phone_control_loop():
             except Exception:
                 pass
         time.sleep(CMD_EVERY)
+
+
+# ---------------- computer health guard ----------------
+# Every minute: how hot and how busy is this computer? If it's running hot or out of memory,
+# Guardian Monitor eases off on its own, and if it gets really hot it pauses everything until
+# the computer cools down, then picks back up. It also clears out any hidden Chrome it left behind.
+HEALTH_EVERY = 60
+health = {"level": "ok", "thermal": "normal", "cpu": None, "mem_free": None, "temp_c": None,
+          "note": "", "since": time.time(), "busy_streak": 0, "paused_pkc": False, "calm_since": None,
+          "cleaned": 0}
+LEVELS = ["ok", "warm", "hot", "critical"]
+THERMAL_MAC = {0: "normal", 1: "warm", 2: "hot", 3: "critical"}
+
+
+def read_stats():
+    """{'thermal': normal|warm|hot|critical|None, 'cpu': %, 'mem_free': %, 'temp_c': °C or None}"""
+    out = {"thermal": None, "cpu": None, "mem_free": None, "temp_c": None}
+    try:
+        t, _ = subprocess.run(["osascript", "-l", "JavaScript", "-e",
+                               'ObjC.import("Foundation"); $.NSProcessInfo.processInfo.thermalState'],
+                              capture_output=True, text=True, timeout=15).stdout, None
+        if t.strip().isdigit():
+            out["thermal"] = THERMAL_MAC.get(int(t.strip()), "normal")
+    except Exception:
+        pass
+    try:
+        out["cpu"] = round(min(100.0, os.getloadavg()[0] / (os.cpu_count() or 1) * 100))
+    except Exception:
+        pass
+    try:
+        m = _re.search(r"free percentage:\s*(\d+)%", subprocess.run(["memory_pressure", "-Q"], capture_output=True,
+                                                                     text=True, timeout=15).stdout)
+        if m:
+            out["mem_free"] = int(m.group(1))
+    except Exception:
+        pass
+    return out
+
+
+def clean_stray_chrome():
+    """Hidden page readers should finish in seconds. Close any that got stuck (older than 3 minutes)."""
+    killed = 0
+    try:
+        r = subprocess.run(["ps", "-axo", "pid=,etime=,command="], capture_output=True, text=True, timeout=15)
+        for line in r.stdout.splitlines():
+            if "checker-chrome-" not in line or "--headless" not in line:
+                continue
+            pid, et = line.split()[:2]
+            parts = [int(x) for x in _re.split(r"[-:]", et)]
+            secs = parts[-1] + 60 * (parts[-2] if len(parts) > 1 else 0) + 3600 * (parts[-3] if len(parts) > 2 else 0) \
+                + 86400 * (parts[-4] if len(parts) > 3 else 0)
+            if secs > 180:
+                os.kill(int(pid), 9)
+                killed += 1
+    except Exception:
+        pass
+    return killed
+
+
+def judge_health(st):
+    """Turn the readings into ok / warm / hot / critical, with a plain-words reason."""
+    level, why = "ok", ""
+    th = st.get("thermal")
+    if th in ("warm", "hot", "critical"):
+        level, why = th, f"the computer reports it's {'very hot' if th == 'critical' else 'running hot' if th == 'hot' else 'warm'}"
+    t = st.get("temp_c")
+    if t is not None:
+        tl = "critical" if t >= 95 else "hot" if t >= 88 else "warm" if t >= 80 else "ok"
+        if LEVELS.index(tl) > LEVELS.index(level):
+            level, why = tl, f"it's at {round(t)}°C"
+    cpu = st.get("cpu")
+    if cpu is not None and cpu >= 90:
+        health["busy_streak"] += 1
+    else:
+        health["busy_streak"] = 0
+    if health["busy_streak"] >= 5 and LEVELS.index(level) < LEVELS.index("warm"):   # busy for 5+ minutes
+        level, why = "warm", f"the processor has been {cpu}% busy for a while"
+    if health["busy_streak"] >= 15 and LEVELS.index(level) < LEVELS.index("hot"):
+        level, why = "hot", f"the processor has been maxed out ({cpu}%) for 15+ minutes"
+    mf = st.get("mem_free")
+    if mf is not None and mf < 8:
+        ml = "hot" if mf < 4 else "warm"
+        if LEVELS.index(ml) > LEVELS.index(level):
+            level, why = ml, f"memory is almost full ({mf}% free)"
+    return level, why
+
+
+def health_mode():
+    try:
+        return load_settings()["health_mode"]
+    except Exception:
+        return "protect"
+
+
+def health_factor():
+    """How much to slow down: 1 = normal, 2 = warm (half speed). Only when Safety is set to protect."""
+    return 2.0 if health["level"] == "warm" and health_mode() == "protect" else 1.0
+
+
+def health_paused():
+    return health["level"] in ("hot", "critical") and health_mode() == "protect"
+
+
+def health_line():
+    lv = health["level"]
+    icon = {"ok": "🟢", "warm": "🟡", "hot": "🟠", "critical": "🔴"}[lv]
+    bits = []
+    if health["temp_c"] is not None:
+        bits.append(f"{round(health['temp_c'])}°C")
+    elif health["thermal"]:
+        bits.append(f"temp {health['thermal']}")
+    if health["cpu"] is not None:
+        bits.append(f"CPU {health['cpu']}%")
+    if health["mem_free"] is not None:
+        bits.append(f"{health['mem_free']}% memory free")
+    word = {"ok": "Computer OK", "warm": "Computer warm: slowed down", "hot": "Computer hot: checkers paused",
+            "critical": "Computer very hot: everything paused"}[lv]
+    mode = health_mode()
+    if mode == "warn" and lv != "ok":
+        word = {"warm": "Computer working hard", "hot": "Computer hot", "critical": "Computer very hot"}[lv] + " (warn only)"
+    elif mode == "off":
+        word = "Computer safety off"
+        icon = "⚪"
+    return f"{icon} {word}" + (f" ({' · '.join(bits)})" if bits else "")
+
+
+def health_tick():
+    st = read_stats()
+    health.update(thermal=st.get("thermal"), cpu=st.get("cpu"), mem_free=st.get("mem_free"), temp_c=st.get("temp_c"))
+    killed = clean_stray_chrome()
+    if killed:
+        health["cleaned"] += killed
+        log(f"Closed {killed} stuck hidden Chrome reader{'s' if killed > 1 else ''}.")
+    new, why = judge_health(st)
+    old = health["level"]
+    s = load_settings()
+    health["checked"] = time.time()
+    if s["health_mode"] == "off":                 # readings only, no actions, no pings
+        health.update(level="ok", note="", calm_since=None)
+        if health["paused_pkc"]:
+            health["paused_pkc"] = False
+            start_watching()
+        return
+    if s["health_mode"] == "warn":                # tell me, but don't slow down or pause anything
+        if LEVELS.index(new) > LEVELS.index(old):
+            health.update(level=new, note=why, since=time.time(), calm_since=None)
+            icon = {"warm": "🟡", "hot": "🟠", "critical": "🔴"}[new]
+            log(f"Computer check: {why}. (Safety is set to warn only, so nothing was slowed down.)")
+            info_ping(s, f"{icon} Your computer is {'very hot' if new == 'critical' else 'running hot' if new == 'hot' else 'working hard'}",
+                      f"Guardian Monitor noticed {why}. Safety is set to warn only, so it's still running at full speed.")
+        elif LEVELS.index(new) < LEVELS.index(old):
+            health.update(level=new, note=why, calm_since=None)
+        return
+    if LEVELS.index(new) > LEVELS.index(old):                     # getting worse: act right away
+        health.update(level=new, note=why, since=time.time(), calm_since=None)
+        if new == "warm":
+            log(f"Computer check: {why}. Slowing everything down to half speed.")
+            info_ping(s, "🟡 Easing off your computer", f"Guardian Monitor noticed {why}, so it's checking half as "
+                      "often until things settle. Still watching.")
+        elif new == "hot":
+            log(f"Computer check: {why}. Pausing Target and Walmart; Pokémon Center keeps watching slowly.")
+            info_ping(s, "🟠 Your computer is running hot", f"Guardian Monitor noticed {why}. Target and Walmart are "
+                      "paused and Pokémon Center is checking at half speed until it cools down.")
+        else:
+            was = state["status"] == "watching"
+            health["paused_pkc"] = was or health["paused_pkc"]
+            if was:
+                stop_watching()
+            log(f"Computer check: {why}. Pausing everything until it cools down.")
+            info_ping(s, "🔴 Paused to protect your computer", f"Guardian Monitor noticed {why}, so it paused "
+                      "everything. It starts again by itself once the computer has cooled down for 10 minutes. "
+                      "If this keeps happening, check that the fans aren't blocked or dusty.")
+    elif LEVELS.index(new) < LEVELS.index(old):                   # better: wait 10 calm minutes first
+        if health["calm_since"] is None:
+            health["calm_since"] = time.time()
+        if time.time() - health["calm_since"] >= 600:
+            health.update(level=new, note=why, since=time.time(), calm_since=None)
+            if new == "ok":
+                log("Computer check: back to normal. Full speed again.")
+                resumed = ""
+                if health["paused_pkc"]:
+                    health["paused_pkc"] = False
+                    if current_window(s, eastern_now()) or s["schedule_mode"] == "manual":
+                        start_watching()
+                        resumed = " Pokémon Center watching is back on."
+                info_ping(s, "✅ Computer back to normal", "It's cooled down, so Guardian Monitor is back to full "
+                          "speed." + resumed)
+            else:
+                log(f"Computer check: cooling down ({new}).")
+    else:
+        health["calm_since"] = None
+
+
+def health_loop():
+    time.sleep(15)
+    while True:
+        try:
+            health_tick()
+        except Exception as e:
+            log(f"Computer check error: {e}")
+        time.sleep(HEALTH_EVERY)
 
 
 # ---------------- updates (the Update button) ----------------
@@ -4796,6 +5077,7 @@ def main():
     threading.Thread(target=news_loop, daemon=True).start()
     threading.Thread(target=update_loop, daemon=True).start()
     threading.Thread(target=apply_branding, daemon=True).start()
+    threading.Thread(target=health_loop, daemon=True).start()
     threading.Thread(target=phone_control_loop, daemon=True).start()
     for n in checkers:
         threading.Thread(target=checker_loop, args=(n,), daemon=True).start()
