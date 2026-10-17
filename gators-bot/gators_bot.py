@@ -183,6 +183,13 @@ def main():
         return 0
     found = changes(old, products)
     embeds = [embed(kind, p, vs) for kind, p, vs in found]
+    if not embeds and os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch":
+        live = sum(1 for p in products.values() if any(v["available"] for v in p["variants"].values()))
+        post({"username": "Gator's Restock Watch", "embeds": [{
+            "title": "✅ Gator's restock watch is running",
+            "description": f"Checked {len(products)} Pokémon products ({live} in stock). Nothing new since the last "
+                           "check. It keeps checking every few minutes and posts here when something restocks.",
+            "color": GREEN}]})
     for i in range(0, len(embeds), 10):          # Discord allows 10 embeds per message
         post({"username": "Gator's Restock Watch", "embeds": embeds[i:i + 10]})
         time.sleep(1)
