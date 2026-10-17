@@ -10,7 +10,7 @@ on:
         type: boolean
         default: false
       resend:
-        description: "Resend the most recent restock alert (pings @everyone)"
+        description: "Resend the most recent sealed restock alert"
         type: boolean
         default: false
 
@@ -21,7 +21,7 @@ concurrency:
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 8
     steps:
       - uses: actions/checkout@v4
         with:
@@ -35,6 +35,9 @@ jobs:
       - name: Check Gator's Card Den
         env:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+          DISCORD_WEBHOOK_SINGLES: ${{ secrets.DISCORD_WEBHOOK_SINGLES }}
+          GATORS_ROLE: ${{ vars.GATORS_ROLE }}
+          GATORS_SINGLES_ROLE: ${{ vars.GATORS_SINGLES_ROLE }}
           GATORS_TEST: ${{ github.event.inputs.test || 'false' }}
           GATORS_RESEND: ${{ github.event.inputs.resend || 'false' }}
         run: python3 gators-bot/gators_bot.py
