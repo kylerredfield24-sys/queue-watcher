@@ -1,5 +1,5 @@
 #!/bin/bash
-# Queue Watcher launcher.
+# Guardian Monitor launcher.
 # 1) Builds the window app the first time (or after an update) with Apple's osacompile.
 # 2) Starts the watcher in the background if it isn't running.
 # 3) Opens the window. If the window app can't be made, opens the control panel in the browser.
@@ -18,11 +18,11 @@ build_panel() {
   plist="$tmp/Contents/Info.plist"
   cp "$RES/AppIcon.icns" "$tmp/Contents/Resources/applet.icns"
   plutil -replace CFBundleIdentifier -string "com.kyler.queuewatcher.panel" "$plist"
-  plutil -replace CFBundleName -string "Queue Watcher" "$plist"
-  plutil -replace CFBundleDisplayName -string "Queue Watcher" "$plist"
+  plutil -replace CFBundleName -string "Guardian Monitor" "$plist"
+  plutil -replace CFBundleDisplayName -string "Guardian Monitor" "$plist"
   plutil -replace CFBundleShortVersionString -string "$VERSION" "$plist"
   plutil -replace NSAppTransportSecurity -json '{"NSAllowsLocalNetworking":true,"NSAllowsArbitraryLoads":true}' "$plist"
-  plutil -replace NSAppleEventsUsageDescription -string "Queue Watcher controls Chrome to watch for queues." "$plist"
+  plutil -replace NSAppleEventsUsageDescription -string "Guardian Monitor controls Chrome to watch for queues." "$plist"
   codesign --force --deep --sign - "$tmp" >>"$SUPPORT/launcher.log" 2>&1
   rm -rf "$PANEL" && mv "$tmp" "$PANEL" || return 1
   echo "$VERSION" > "$SUPPORT/panel_version"
@@ -51,7 +51,7 @@ fi
 
 if [ -z "$RUNNING" ]; then
   if ! command -v python3 >/dev/null 2>&1; then
-    osascript -e 'display alert "Python 3 is needed" message "Install Python from python.org, then open Queue Watcher again."'
+    osascript -e 'display alert "Python 3 is needed" message "Install Python from python.org, then open Guardian Monitor again."'
     exit 1
   fi
   # Runs on its own (not tied to this launcher), so replacing the app later is never blocked.

@@ -1,18 +1,18 @@
 """
-Queue Watcher for Windows: the Windows parts.
+Guardian Monitor for Windows: the Windows parts.
 
 The main app (watcher_app.py) is shared with the Mac version. On a Mac it controls Chrome with
 AppleScript and keeps passwords in the Keychain. Windows has neither, so this file swaps those
 pieces for Windows ones:
 
-  Chrome control   Queue Watcher's own Chrome window, controlled through Chrome's built-in
+  Chrome control   Guardian Monitor's own Chrome window, controlled through Chrome's built-in
                    DevTools connection (only reachable from this PC). You sign in to Pokémon
                    Center in that window once and it stays signed in.
   Passwords        Windows Credential Manager
   Notifications    Windows notifications (bottom-right corner)
   Stay awake       Windows "don't sleep" request while watching / during a schedule
   App window       Microsoft Edge (or Chrome) in app mode: its own window, no tabs or address bar.
-                   Closing it quits Queue Watcher.
+                   Closing it quits Guardian Monitor.
 """
 
 import base64
@@ -32,7 +32,7 @@ IS_WIN = sys.platform == "win32"
 NO_WINDOW = 0x08000000 if IS_WIN else 0          # CREATE_NO_WINDOW: never flash a black console window
 NEW_GROUP = 0x00000200 if IS_WIN else 0          # CREATE_NEW_PROCESS_GROUP
 
-CDP_PORT = int(os.environ.get("QW_CDP_PORT", "9223"))       # Queue Watcher's Chrome
+CDP_PORT = int(os.environ.get("QW_CDP_PORT", "9223"))       # Guardian Monitor's Chrome
 PANEL_PORT = int(os.environ.get("QW_PANEL_PORT", "9224"))   # the app window
 
 W = None          # the main app module, set by install()
@@ -218,7 +218,7 @@ def page_call(win, method, params=None, timeout=30):
     tid = win[1]
     targets = page_targets()
     if targets is None:
-        raise TabGone("Queue Watcher's Chrome window is closed")
+        raise TabGone("Guardian Monitor's Chrome window is closed")
     t = next((x for x in targets if x.get("id") == tid), None)
     if not t:
         raise TabGone("tab not found")
@@ -231,7 +231,7 @@ def page_call(win, method, params=None, timeout=30):
         ws.close()
 
 
-# ---------------- Queue Watcher's Chrome window ----------------
+# ---------------- Guardian Monitor's Chrome window ----------------
 def profile_dir():
     return os.path.join(W.DATA_DIR, "chrome-profile")
 
@@ -255,7 +255,7 @@ def launch_chrome(url):
         cmd.append("--no-sandbox")
     cmd.append(url)
     try:
-        # Not tied to Queue Watcher: if you quit the app, the Chrome window (and your queue spot) stays.
+        # Not tied to Guardian Monitor: if you quit the app, the Chrome window (and your queue spot) stays.
         subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                          creationflags=NEW_GROUP, close_fds=True,
                          **({} if IS_WIN else {"start_new_session": True}))
@@ -341,7 +341,7 @@ def find_tab(url):
 
 
 def new_window(url, minimized):
-    """A new window in Queue Watcher's Chrome (starting Chrome if needed)."""
+    """A new window in Guardian Monitor's Chrome (starting Chrome if needed)."""
     if page_targets() is None:
         tid, err = launch_chrome(url)
         if not tid:
@@ -360,12 +360,12 @@ def new_window(url, minimized):
 def open_window(url):
     found = find_tab(url)
     if found:
-        W.log("Found an open tab on this site in Queue Watcher's Chrome. Using it.")
+        W.log("Found an open tab on this site in Guardian Monitor's Chrome. Using it.")
         return found, ""
     stay_back = W.load_settings().get("pkc_background", True)
     win, err = new_window(url, stay_back)
     if win:
-        W.log("Opened the site in Queue Watcher's Chrome window" + (" (minimized)." if stay_back else "."))
+        W.log("Opened the site in Guardian Monitor's Chrome window" + (" (minimized)." if stay_back else "."))
         if not stay_back:
             bring_to_front(win)
     return win, err
@@ -460,7 +460,7 @@ def read_page(win):
 
 
 def js_error_help(err):
-    return ("Queue Watcher couldn't read the page in its Chrome window. If this keeps showing, close that "
+    return ("Guardian Monitor couldn't read the page in its Chrome window. If this keeps showing, close that "
             "Chrome window, then press Stop and Start. Chrome said: " + err.strip()[:200])
 
 
@@ -495,7 +495,7 @@ def checker_tab(name, url):
 
 
 def background_tab(url):
-    """A background tab in Queue Watcher's Chrome (nothing pops up). Its own minimized window if Chrome is closed."""
+    """A background tab in Guardian Monitor's Chrome (nothing pops up). Its own minimized window if Chrome is closed."""
     if page_targets() is None:
         return None, True
     try:
@@ -588,7 +588,7 @@ def dump_dom(name, url):
 
 # ---------------- passwords: Windows Credential Manager ----------------
 def _cred_target(url, user):
-    return f"Queue Watcher: {W.site_host(url)}: {user}"
+    return f"Queue Watcher: {W.site_host(url)}: {user}"   # kept so a saved login keeps working
 
 
 def _advapi():
@@ -705,7 +705,7 @@ $app = '{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell
 def notify_mac(msg):
     """A Windows notification (the function keeps its Mac name so the shared code can call it)."""
     from xml.sax.saxutils import escape
-    xml = ('<toast><visual><binding template="ToastGeneric"><text>Queue Watcher</text>'
+    xml = ('<toast><visual><binding template="ToastGeneric"><text>Guardian Monitor</text>'
            f"<text>{escape(str(msg))}</text></binding></visual>"
            '<audio src="ms-winsoundevent:Notification.Default"/></toast>')
     if not IS_WIN:
@@ -930,12 +930,12 @@ def main():
     try:
         server = W.ThreadingHTTPServer(("127.0.0.1", W.PORT), W.Handler)
     except OSError:
-        message_box("Queue Watcher can't start",
-                    f"Another program is using port {W.PORT}. Queue Watcher may already be open. "
+        message_box("Guardian Monitor can't start",
+                    f"Another program is using port {W.PORT}. Guardian Monitor may already be open. "
                     "If not, restart your PC and try again.")
         return
     url = f"http://127.0.0.1:{W.PORT}/"
-    W.log(f"Queue Watcher {W.VERSION} (Windows) is running.")
+    W.log(f"Guardian Monitor {W.VERSION} (Windows) is running.")
     threading.Thread(target=W.scheduler_loop, daemon=True).start()
     threading.Thread(target=W.news_loop, daemon=True).start()
     threading.Thread(target=W.update_loop, daemon=True).start()

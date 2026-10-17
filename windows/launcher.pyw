@@ -1,5 +1,5 @@
-"""Opens Queue Watcher (Windows). The desktop shortcut runs this with pythonw, so no console shows.
-If Queue Watcher is already open it brings its window up; if an older version is still running,
+"""Opens Guardian Monitor (Windows). The desktop shortcut runs this with pythonw, so no console shows.
+If Guardian Monitor is already open it brings its window up; if an older version is still running,
 it closes that one and starts the new one."""
 import json
 import os

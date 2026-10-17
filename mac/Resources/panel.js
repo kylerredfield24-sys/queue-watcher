@@ -1,5 +1,5 @@
-// Queue Watcher window app.
-// Built on your Mac the first time you open Queue Watcher (with Apple's own osacompile),
+// Guardian Monitor window app.
+// Built on your Mac the first time you open Guardian Monitor (with Apple's own osacompile),
 // so it's a real Mac app: its own window, its own Dock icon, and ⌘Q to quit.
 // Closing the window (red button) or ⌘Q quits everything.
 ObjC.import("Cocoa");
@@ -63,7 +63,7 @@ function showWindow() {
   win = $.NSWindow.alloc.initWithContentRectStyleMaskBackingDefer(
     frame, style, $.NSBackingStoreBuffered, false);
   win.releasedWhenClosed = false;
-  win.title = "Queue Watcher";
+  win.title = "Guardian Monitor";
   win.minSize = $.NSMakeSize(420, 520);
   win.backgroundColor = $.NSColor.colorWithSRGBRedGreenBlueAlpha(0.024, 0.039, 0.075, 1.0);
 
@@ -89,7 +89,7 @@ function run() {
   showWindow();
 }
 
-// Opening Queue Watcher again (or clicking the Dock icon) brings the window back.
+// Opening Guardian Monitor again (or clicking the Dock icon) brings the window back.
 function reopen() {
   showWindow();
 }

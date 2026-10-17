@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Queue Watcher - Pokemon Center queue alert app (Mac + Google Chrome)
+Guardian Monitor - Pokemon Center queue alert app (Mac + Google Chrome)
 
 Runs a small control panel in your browser (only on this Mac).
 Start watching -> refreshes Pokemon Center in its own Chrome window.
@@ -23,7 +23,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs
 
 PORT = 8765
-VERSION = "3.5"   # the launcher compares this, and replaces an older copy that's still running
+VERSION = "3.6"   # the launcher compares this, and replaces an older copy that's still running
 PLATFORM = "mac"  # the Windows version switches this to "windows"
 TOKEN = secrets.token_hex(16)
 PAGE_LOAD_WAIT = 8
@@ -55,6 +55,7 @@ DEFAULTS = {
     "schedule_custom": {str(d): {"on": d < 5, "start": "09:45", "end": "14:30"} for d in range(7)},
     # Staying signed in
     "pkc_background": True,
+    "brand_v1": False,               # set once the Discord bot got the Guardian Monitor name + picture
     "phone_control": True,           # Start / Stop / Status from the ntfy app          # Pokémon Center window opens minimized, pops up on a queue
     "check_signed_in": True,
     "auto_login": False,
@@ -219,6 +220,7 @@ def clean_settings(new):
     s["target_watch"] = "\n".join(links[:10])
     s["msrp_limits"] = str(s["msrp_limits"]).strip()[:3000] or MSRP_DEFAULT
     s["pkc_background"] = s.get("pkc_background", True) in (True, "true", "on", 1, "1")
+    s["brand_v1"] = s.get("brand_v1") in (True, "true", 1, "1")
     s["phone_control"] = s.get("phone_control", True) in (True, "true", "on", 1, "1")
     for key in ("check_signed_in", "auto_login", "login_saved"):
         s[key] = s[key] in (True, "true", "on", 1, "1")
@@ -398,7 +400,7 @@ def notify_discord(s, msg, mention=True, force=False):
 
 
 def notify_mac(msg):
-    osa(f'display notification "{as_str(msg)}" with title "Queue Watcher" sound name "Glass"')
+    osa(f'display notification "{as_str(msg)}" with title "Guardian Monitor" sound name "Glass"')
 
 
 def set_discord_profile(s, name, avatar_data_url):
@@ -655,16 +657,16 @@ def js_error_help(err):
     """Chrome's real reason, in plain words."""
     e = err.lower()
     if "not allowed" in e or "-1743" in e or "not authorized" in e:
-        return ("macOS is blocking Queue Watcher from controlling Chrome. Go to System Settings → Privacy & "
-                "Security → Automation, and turn on Google Chrome under Queue Watcher (and Terminal/python3 if listed).")
+        return ("macOS is blocking Guardian Monitor from controlling Chrome. Go to System Settings → Privacy & "
+                "Security → Automation, and turn on Google Chrome under Guardian Monitor (and Terminal/python3 if listed).")
     if "turned off" in e or "allow javascript" in e:
         return ("Chrome says reading pages is turned off in the profile this window opened in (often a school or "
                 "work profile, which can block it). Fix: open pokemoncenter.com in a tab in your PERSONAL Chrome profile "
-                "and leave it open, so Queue Watcher uses that tab. In that window, check View → Developer → "
+                "and leave it open, so Guardian Monitor uses that tab. In that window, check View → Developer → "
                 "Allow JavaScript from Apple Events. Then press Stop and Start.")
     if "not allowed" in e or "-1743" in e or "not authorized" in e:
-        return ("macOS is blocking Queue Watcher from controlling Chrome. Go to System Settings → Privacy & "
-                "Security → Automation, and turn on Google Chrome under Queue Watcher (and Terminal/python3 if listed).")
+        return ("macOS is blocking Guardian Monitor from controlling Chrome. Go to System Settings → Privacy & "
+                "Security → Automation, and turn on Google Chrome under Guardian Monitor (and Terminal/python3 if listed).")
     if "timed out" in e or "-1712" in e:
         return "Chrome took too long to answer. If this keeps showing, restart Chrome."
     return "Chrome wouldn't let it read the page text. Chrome said: " + err.strip()[:200]
@@ -684,7 +686,7 @@ def bring_to_front(win):
 # ---------------- sign-in (Mac Keychain) ----------------
 # Your password is kept ONLY in the Mac Keychain. It's never written to the settings
 # file, never shown in the app, and only ever typed into the site's own sign-in page.
-KC_SERVICE = "Queue Watcher"
+KC_SERVICE = "Queue Watcher"   # name of the saved login in the Keychain (kept so your login still works)
 
 
 def kc_service(url):
@@ -875,7 +877,7 @@ def stopped_unexpectedly(s, why):
     """Watcher stopped on its own: tell the UI AND ping you, so you know it's not watching."""
     log(f"Stopped: {why}")
     set_state(status="error", message=f"Stopped: {why} Press Start to try again.")
-    send_all(s, "Queue Watcher stopped", f"Queue Watcher stopped: {why} It is NOT watching right now.")
+    send_all(s, "Guardian Monitor stopped", f"Guardian Monitor stopped: {why} It is NOT watching right now.")
 
 
 def queue_alerts(s, win, word):
@@ -893,8 +895,8 @@ def queue_alerts(s, win, word):
         extra = "" if i == 0 else f" (reminder {i})"
         # Discord gets ONE general alert; the reminders only go to your phone and Mac.
         if test:   # drill: clearly marked, and never @'s anyone in Discord
-            send_all(s, "TEST: queue alert", f"TEST: Queue Watcher drill. Alerts are working!{extra}",
-                     None if i else "\U0001F9EA Test from Queue Watcher: queue alerts are working "
+            send_all(s, "TEST: queue alert", f"TEST: Guardian Monitor drill. Alerts are working!{extra}",
+                     None if i else "\U0001F9EA Test from Guardian Monitor: queue alerts are working "
                      "(this was a drill, no real queue).", discord_mention_on=False, ack_button=True)
         else:
             server_msg = None if i else discord_text(s, "discord_queue_msg")
@@ -3030,7 +3032,7 @@ def stop_watching():
 PAGE = r"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Queue Watcher</title>
+<title>Guardian Monitor</title>
 <link rel="icon" type="image/png" href="data:image/png;base64,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">
 <style>
 :root{--bg:#f4f5f7;--card:#fff;--text:#1b1d22;--muted:#6b7080;--line:#e2e4ea;
@@ -3206,7 +3208,7 @@ button.small{padding:6px 12px;font-size:13px}
 <script>/* apply the saved theme before anything draws, so there's no flash */
 try{document.documentElement.dataset.theme=localStorage.getItem("qw-theme")||"neon";}catch(e){document.documentElement.dataset.theme="neon";}
 </script></head><body><div id="wp"><img id="wpImg" alt=""><video id="wpVid" muted loop playsinline autoplay></video></div><canvas id="fx"></canvas><div class="wrap">
-<div class="head"><h1>Queue Watcher</h1><span class="tag" id="sysTag">Idle</span></div>
+<div class="head"><h1>Guardian Monitor</h1><span class="tag" id="sysTag">Idle</span></div>
 
 <!-- ===== 1. Status ===== -->
 <div class="card" id="updBanner" style="display:none;border-color:var(--accent)">
@@ -3281,7 +3283,7 @@ try{document.documentElement.dataset.theme=localStorage.getItem("qw-theme")||"ne
     <summary>How the schedule works (what needs to be on)</summary>
     <ul class="howto">
       <li><b>Your Mac stays on, plugged in, with the lid open.</b> While a schedule is set, the app keeps your Mac from sleeping (the screen can still turn off). It can't wake a Mac that's asleep or closed.</li>
-      <li><b>Queue Watcher stays open.</b> You can close this browser tab; the app keeps running. To open it automatically when your Mac starts, add it in <b>System Settings &rarr; General &rarr; Login Items</b>.</li>
+      <li><b>Guardian Monitor stays open.</b> You can close this browser tab; the app keeps running. To open it automatically when your Mac starts, add it in <b>System Settings &rarr; General &rarr; Login Items</b>.</li>
       <li><b>You're signed in to the site in Chrome.</b> At start time the app opens its own Chrome window, which uses your normal Chrome sign-in.</li>
       <li><b>You can always press Start now or Stop.</b> If you press Stop, a queue is found, or a block page shows up, it waits until the next scheduled time, so it never refreshes you out of a queue.</li>
     </ul>
@@ -3389,7 +3391,7 @@ try{document.documentElement.dataset.theme=localStorage.getItem("qw-theme")||"ne
     <h4 style="margin:16px 0 4px">Control it from your phone</h4>
     <label class="check"><input type="checkbox" id="phone_control"> Let my phone Start, Stop and check Status</label>
     <p class="sub">Every reply comes with <b>Start</b>, <b>Stop</b> and <b>Status</b> buttons. To get them any time, save these
-      links as bookmarks or home-screen shortcuts on your phone (tap one and Queue Watcher answers in ntfy within a few seconds):</p>
+      links as bookmarks or home-screen shortcuts on your phone (tap one and Guardian Monitor answers in ntfy within a few seconds):</p>
     <div class="sub" id="phoneLinks"></div>
     <div class="btns"><button class="plain" onclick="sendControls()">Send the buttons to my phone</button>
       <span class="saved" id="phoneMsg"></span></div>
@@ -3496,7 +3498,7 @@ try{document.documentElement.dataset.theme=localStorage.getItem("qw-theme")||"ne
 <div class="card">
   <details class="inner flush"><summary>Activity log</summary><div class="log" id="log"></div></details>
   <div class="btns"><button class="plain" id="updBtn" onclick="doUpdate()">Update</button>
-  <button class="plain" id="quitBtn" onclick="quitApp()">Quit Queue Watcher</button></div>
+  <button class="plain" id="quitBtn" onclick="quitApp()">Quit Guardian Monitor</button></div>
   <div class="sub" id="updMsg"></div>
 </div>
 </div>
@@ -3655,11 +3657,11 @@ async function runDrill(){
 async function quitApp(){
   if(!confirmClick(document.getElementById("quitBtn"),"Click again to quit (watching stops)"))return;
   try{await api("/quit",{});}catch(e){}
-  document.body.innerHTML="<div class='wrap'><h1>Queue Watcher is closed.</h1><p>Open the app again to start it.</p></div>";
+  document.body.innerHTML="<div class='wrap'><h1>Guardian Monitor is closed.</h1><p>Open the app again to start it.</p></div>";
 }
 async function refresh(){
   let d;try{d=await api("/status");}catch(e){
-    document.getElementById("msg").textContent="Reconnecting... (if this stays, open Queue Watcher again)";
+    document.getElementById("msg").textContent="Reconnecting... (if this stays, open Guardian Monitor again)";
     if(!window._reloading){window._reloading=setTimeout(()=>location.reload(),5000);}return;}
   fill(d.settings,false);
   const card=document.getElementById("statusCard");
@@ -3682,7 +3684,7 @@ async function refresh(){
   document.getElementById("jsWarn").textContent=(d.js_help||"")+" It can still spot a queue from the page address and title meanwhile.";
   document.getElementById("ackRow").style.display=(d.status==="found"&&d.alerting)?"flex":"none";
   document.getElementById("log").textContent=d.log.slice().reverse().join("\n");
-  if(d.status==="found")document.title="🚨 QUEUE UP - Queue Watcher";else document.title="Queue Watcher";
+  if(d.status==="found")document.title="🚨 QUEUE UP - Guardian Monitor";else document.title="Guardian Monitor";
 }
 
 /* ===== Theme + animated backgrounds ===== */
@@ -4207,12 +4209,12 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(200, f"ok {VERSION}", "text/plain")
         if path == "/drill":
             drill["hits"] += 1
-            body = ("<h1>Queue Watcher drill</h1><p>You are now in the waiting room. "
+            body = ("<h1>Guardian Monitor drill</h1><p>You are now in the waiting room. "
                     "Please keep your browser open. (This is a test page, not a real queue.)</p>"
                     if drill["hits"] >= 2 else
                     "<h1>Test Store</h1><p>Booster boxes, collections and more. "
                     "This fake store turns into a queue in a few seconds.</p>")
-            return self.send(200, "<!doctype html><title>Queue Watcher drill</title>"
+            return self.send(200, "<!doctype html><title>Guardian Monitor drill</title>"
                              "<body style='font:18px -apple-system,sans-serif;padding:40px'>" + body,
                              "text/html; charset=utf-8")
         if path in ("/", "/index.html"):          # also "/?app=1", which the window app uses
@@ -4280,7 +4282,7 @@ class Handler(BaseHTTPRequestHandler):
             s = load_settings()
             if not s["discord_webhook"]:
                 return self.send(200, json.dumps({"ok": False, "msg": "Add your Discord webhook URL first."}))
-            preview = ("\u2705 **Test from Queue Watcher.** This is what the queue alert will say "
+            preview = ("\u2705 **Test from Guardian Monitor.** This is what the queue alert will say "
                        "(the @ is left off for the test):\n\n" + discord_text(s, "discord_queue_msg"))
             threading.Thread(target=notify_discord, args=(s, preview, False, True), daemon=True).start()
             return self.send(200, json.dumps({"ok": True, "msg": "Sent a preview to Discord."}))
@@ -4292,7 +4294,7 @@ class Handler(BaseHTTPRequestHandler):
             s = load_settings()
             log("Sending test pings...")
             threading.Thread(target=send_all, daemon=True,
-                             args=(s, "Queue Watcher test", "Test ping. Your alerts work!",
+                             args=(s, "Guardian Monitor test", "Test ping. Your alerts work!",
                                    "\u2705 Test: Pok\u00e9mon Center queue alerts are set up for this channel.",
                                    False)).start()
         elif self.path == "/target_test":
@@ -4342,8 +4344,40 @@ class Handler(BaseHTTPRequestHandler):
         self.send(200, self.status_json())
 
 
+# ---------------- Guardian Monitor rename (runs once) ----------------
+BRAND = "Guardian Monitor"
+
+
+def apply_branding():
+    """Give your Discord alerts the Guardian Monitor name and picture, once."""
+    s = load_settings()
+    if s["brand_v1"]:
+        return
+    if not s["discord_webhook"]:
+        s = load_settings()            # fresh copy, so nothing you just saved gets overwritten
+        s["brand_v1"] = True
+        save_settings(s)
+        return
+    import base64
+    try:
+        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "guardian_avatar.png"), "rb") as f:
+            pic = "data:image/png;base64," + base64.b64encode(f.read()).decode()
+    except Exception:
+        pic = None
+    ok, msg = set_discord_profile(s, BRAND, pic)
+    if ok:
+        s = load_settings()
+        if not s["discord_name"] or s["discord_name"].lower() in ("queue watcher", "pkc queue watcher"):
+            s["discord_name"] = BRAND
+        s["brand_v1"] = True
+        save_settings(s)
+        log("Discord bot is now called Guardian Monitor, with the new picture.")
+    else:
+        log(f"Couldn't update the Discord bot's name/picture yet: {msg}")
+
+
 # ---------------- phone controls (ntfy) ----------------
-# Send "start", "stop" or "status" to your private command topic (your topic + "-cmd") and Queue Watcher
+# Send "start", "stop" or "status" to your private command topic (your topic + "-cmd") and Guardian Monitor
 # does it and answers on your normal topic. Replies come with Start / Stop / Status buttons.
 NTFY_BASE = "https://ntfy.sh"
 CMD_EVERY = 10
@@ -4473,7 +4507,7 @@ def phone_command(s, text):
         return phone_reply(s, "📋 Recent activity", "\n".join(l[:160] for l in lines) or "Nothing yet.")
     if word in ("status", "?", "check", "how"):
         return phone_reply(s, status_title(), status_text())
-    return phone_reply(s, "Queue Watcher", "Use the buttons, or send start, stop or status.")
+    return phone_reply(s, "Guardian Monitor", "Use the buttons, or send start, stop or status.")
 
 
 def phone_control_loop():
@@ -4753,14 +4787,15 @@ def main():
     try:
         server = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
     except OSError:
-        osa(f'display alert "Queue Watcher can\'t start" message "Another program is using port {PORT}. '
+        osa(f'display alert "Guardian Monitor can\'t start" message "Another program is using port {PORT}. '
             f'Restart your Mac and try again."')
         return
     url = f"http://127.0.0.1:{PORT}/"
-    log("Queue Watcher is running.")
+    log("Guardian Monitor is running.")
     threading.Thread(target=scheduler_loop, daemon=True).start()
     threading.Thread(target=news_loop, daemon=True).start()
     threading.Thread(target=update_loop, daemon=True).start()
+    threading.Thread(target=apply_branding, daemon=True).start()
     threading.Thread(target=phone_control_loop, daemon=True).start()
     for n in checkers:
         threading.Thread(target=checker_loop, args=(n,), daemon=True).start()
