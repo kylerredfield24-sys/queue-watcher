@@ -147,11 +147,29 @@ def post(payload):
             raise
 
 
+def test_post(products):
+    """A clearly marked fake restock, using a real product from the live site, to check everything end to end."""
+    pick = next((p for p in products.values() if any(v["available"] for v in p["variants"].values())),
+                next(iter(products.values())))
+    e = embed("back", pick, list(pick["variants"].values())[:1])
+    e["title"] = "🧪 TEST: Back in stock at Gator's"
+    e["description"] = "**This is a test, not a real restock.**\n" + e["description"]
+    e["color"] = 0xF1C40F
+    post({"username": "Gator's Restock Watch", "embeds": [e]})
+    print(f"Test post sent using: {pick['title']} ({len(products)} products read from the live site).")
+
+
 def main():
+    if os.environ.get("GATORS_TEST") == "true" and not WEBHOOK:
+        print("TEST FAILED: the DISCORD_WEBHOOK secret is missing. Add it in Settings -> Secrets -> Actions.")
+        return 1
     products = store_products()
     if not products:
         print("The store returned no products; keeping the old list.")
-        return 0
+        return 1 if os.environ.get("GATORS_TEST") == "true" else 0
+    if os.environ.get("GATORS_TEST") == "true":
+        test_post(products)
+        return 0                     # a test never changes what it remembers
     old = load_state()
     if old is None:
         save_state(products)

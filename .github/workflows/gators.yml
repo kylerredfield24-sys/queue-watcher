@@ -3,7 +3,12 @@ name: Gator's restock watch
 on:
   schedule:
     - cron: "*/5 * * * *"      # every 5 minutes (GitHub sometimes runs it a little late)
-  workflow_dispatch: {}          # "Run workflow" button for a manual check
+  workflow_dispatch:              # "Run workflow" button for a manual check
+    inputs:
+      test:
+        description: "Send a TEST post to Discord (a fake restock, clearly marked)"
+        type: boolean
+        default: false
 
 concurrency:
   group: gators-watch
@@ -26,9 +31,10 @@ jobs:
       - name: Check Gator's Card Den
         env:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+          GATORS_TEST: ${{ github.event.inputs.test || 'false' }}
         run: python3 gators-bot/gators_bot.py
       - name: Save what's in stock now
-        if: always()
+        if: always() && github.event.inputs.test != 'true'
         uses: actions/cache/save@v4
         with:
           path: gators_state.json
