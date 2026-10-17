@@ -25,6 +25,8 @@ WEBHOOK = os.environ.get("DISCORD_WEBHOOK", "").strip()
 UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) "
       "Chrome/141.0.0.0 Safari/537.36")
 GREEN, BLUE = 0x2ECC71, 0x3498DB
+BOT_NAME = "Guardian Monitor"
+BOT_PIC = "https://raw.githubusercontent.com/kylerredfield24-sys/queue-watcher/main/assets/guardian.png"
 
 
 def get_json(url):
@@ -104,7 +106,7 @@ def embed(kind, p, variants):
     e = {"title": ("🎉 Back in stock at Gator's" if kind == "back" else "🆕 New at Gator's"),
          "description": f"**[{p['title'][:200]}]({p['url']})**\n" + "\n".join(lines),
          "url": p["url"], "color": GREEN if kind == "back" else BLUE,
-         "footer": {"text": "Gator's Card Den · 520 W Walnut St, Perkasie"}}
+         "footer": {"text": "Guardian Monitor · Gator's Card Den, 520 W Walnut St, Perkasie"}}
     if p["image"]:
         e["thumbnail"] = {"url": p["image"]}
     return e
@@ -155,7 +157,7 @@ def test_post(products):
     e["title"] = "🧪 TEST: Back in stock at Gator's"
     e["description"] = "**This is a test, not a real restock.**\n" + e["description"]
     e["color"] = 0xF1C40F
-    post({"username": "Gator's Restock Watch", "embeds": [e]})
+    post({"username": BOT_NAME, "avatar_url": BOT_PIC, "embeds": [e]})
     print(f"Test post sent using: {pick['title']} ({len(products)} products read from the live site).")
 
 
@@ -174,8 +176,8 @@ def main():
     if old is None:
         save_state(products)
         live = sum(1 for p in products.values() if any(v["available"] for v in p["variants"].values()))
-        post({"username": "Gator's Restock Watch", "embeds": [{
-            "title": "✅ Gator's restock watch is on",
+        post({"username": BOT_NAME, "avatar_url": BOT_PIC, "embeds": [{
+            "title": "✅ Guardian Monitor is watching Gator's",
             "description": f"Watching {len(products)} Pokémon products at Gator's Card Den ({live} in stock right now). "
                            "You'll see a post here when something comes back in stock or a new product is added.",
             "color": GREEN}]})
@@ -185,13 +187,13 @@ def main():
     embeds = [embed(kind, p, vs) for kind, p, vs in found]
     if not embeds and os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch":
         live = sum(1 for p in products.values() if any(v["available"] for v in p["variants"].values()))
-        post({"username": "Gator's Restock Watch", "embeds": [{
-            "title": "✅ Gator's restock watch is running",
+        post({"username": BOT_NAME, "avatar_url": BOT_PIC, "embeds": [{
+            "title": "✅ Guardian Monitor is watching Gator's",
             "description": f"Checked {len(products)} Pokémon products ({live} in stock). Nothing new since the last "
                            "check. It keeps checking every few minutes and posts here when something restocks.",
             "color": GREEN}]})
     for i in range(0, len(embeds), 10):          # Discord allows 10 embeds per message
-        post({"username": "Gator's Restock Watch", "embeds": embeds[i:i + 10]})
+        post({"username": BOT_NAME, "avatar_url": BOT_PIC, "embeds": embeds[i:i + 10]})
         time.sleep(1)
     save_state(products)
     print(f"Checked {len(products)} products: {len(found)} restock/new.")

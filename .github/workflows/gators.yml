@@ -1,4 +1,4 @@
-name: Gator's restock watch
+name: Guardian Monitor - Gator's restock watch
 
 on:
   schedule:

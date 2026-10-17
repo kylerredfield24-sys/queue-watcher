@@ -1,4 +1,4 @@
-name: Keep the restock watch running
+name: Guardian Monitor - keep it running
 
 # GitHub pauses scheduled jobs in a repo that has had no changes for 60 days.
 # This makes a tiny change every 2 weeks so that never happens.
