@@ -23,7 +23,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs
 
 PORT = 8765
-VERSION = "3.7"   # the launcher compares this, and replaces an older copy that's still running
+VERSION = "3.8"   # the launcher compares this, and replaces an older copy that's still running
 PLATFORM = "mac"  # the Windows version switches this to "windows"
 TOKEN = secrets.token_hex(16)
 PAGE_LOAD_WAIT = 8
@@ -39,7 +39,9 @@ DEFAULTS = {
     "min_wait": 30,
     "max_wait": 60,
     "ntfy_topic": "",
-    "discord_webhook": "",
+    "discord_webhook": "",           # PKC queue channel (and anything without its own channel)
+    "discord_webhook_target": "",    # blank = use the main webhook
+    "discord_webhook_walmart": "",   # blank = use the main webhook
     "discord_user_id": "",          # user ID or role ID, used with "user"/"role" below
     "discord_mention": "user",       # none | here | everyone | role | user
     "queue_words": "queue, in line, waiting room, keep your browser open, resist the urge to refresh",
@@ -261,6 +263,9 @@ def clean_settings(new):
         s["watch_url"] = DEFAULTS["watch_url"]
     s["ntfy_topic"] = "".join(c for c in s["ntfy_topic"] if c.isalnum() or c in "-_")
     s["discord_user_id"] = "".join(c for c in s["discord_user_id"] if c.isdigit())
+    for key in ("discord_webhook", "discord_webhook_target", "discord_webhook_walmart"):
+        u = str(s.get(key, "")).strip()
+        s[key] = u if u.startswith(("https://", "http://")) else ""
     if s.get("discord_mention") not in ("none", "here", "everyone", "role", "user"):
         s["discord_mention"] = "user"
     return s
@@ -401,17 +406,30 @@ def discord_text(s, key):
     return s[key].replace("{link}", f"<{s['watch_url']}>")
 
 
-def notify_discord(s, msg, mention=True, force=False):
+BOT_PIC = "https://raw.githubusercontent.com/kylerredfield24-sys/queue-watcher/main/assets/guardian.png"
+
+
+def webhook_for(s, channel=None):
+    """Target and Walmart can each post to their own channel; otherwise the main webhook."""
+    if channel in ("target", "walmart") and s.get(f"discord_webhook_{channel}"):
+        return s[f"discord_webhook_{channel}"]
+    return s["discord_webhook"]
+
+
+def notify_discord(s, msg, mention=True, force=False, channel=None):
     """Server-friendly message: your wording, your bot name, and an optional @."""
-    if not s["discord_webhook"] or not (s["discord_enabled"] or force):
+    hook = webhook_for(s, channel)
+    if not hook or not (s["discord_enabled"] or force):
         return
     tag, allowed = discord_mention(s) if mention else ("", {"parse": []})
     payload = {"content": tag + msg, "allowed_mentions": allowed}
     if s["discord_name"] and not bad_discord_name(s["discord_name"]):
         payload["username"] = s["discord_name"]
+    if hook != s["discord_webhook"]:      # extra channels get the logo without a separate setup step
+        payload["avatar_url"] = BOT_PIC
     try:
         req = urllib.request.Request(
-            s["discord_webhook"],
+            hook,
             data=json.dumps(payload).encode("utf-8"),
             headers={"Content-Type": "application/json", "User-Agent": "QueueWatcher/1.0"},
         )
@@ -468,12 +486,15 @@ def phone_acked(s, since):
     return False
 
 
-def send_all(s, title, msg, discord_msg=None, discord_mention_on=True, ack_button=False):
+def send_all(s, title, msg, discord_msg=None, discord_mention_on=True, ack_button=False, channel=None):
     """Phone + Mac get the personal message. Discord only gets discord_msg (if given),
     so the server sees clean, general alerts and none of your personal status pings."""
     notify_phone(s, title, msg, ack_button)
     if discord_msg:
-        notify_discord(s, discord_msg, discord_mention_on)
+        if channel:
+            notify_discord(s, discord_msg, discord_mention_on, channel=channel)
+        else:
+            notify_discord(s, discord_msg, discord_mention_on)
     notify_mac(msg)
 
 
@@ -2667,7 +2688,7 @@ def target_alert(s, it, test=False):
     ss = dict(s, discord_mention=who) if who in ("here", "everyone") else s
     send_all(ss, "TEST: Target alert" if test else "Target restock!",
              ("TEST: " if test else "") + f"{it['name']} is in stock at Target for {price}.",
-             target_discord(s, it, test), discord_mention_on=(not test and who != "none"))
+             target_discord(s, it, test), discord_mention_on=(not test and who != "none"), channel="target")
 
 
 def send_target_test(s):
@@ -2788,12 +2809,13 @@ def _run_walmart(s):
         if it["status"] == "open":
             log(f"Walmart drawing open: {it['name']}")
             send_all(s, "Walmart drawing is OPEN", f"Enter now: {it['name']} {price}. {it['when']}".strip(),
-                     f"\U0001F39F️ **Walmart drawing open:** {it['name']} {price} ({it['when']})\n<{WALMART_DRAW}>")
+                     f"\U0001F39F️ **Walmart drawing open:** {it['name']} {price} ({it['when']})\n<{WALMART_DRAW}>",
+                     channel="walmart")
         else:
             log(f"Walmart drawing coming up: {it['name']}")
             send_all(s, "Walmart drawing coming up", f"{it['name']} {price}. {it['when']}".strip(),
                      f"\U0001F39F️ **Walmart drawing coming up:** {it['name']} {price} ({it['when']})\n<{WALMART_DRAW}>",
-                     discord_mention_on=False)
+                     discord_mention_on=False, channel="walmart")
     save_walmart_seen(seen)
     c["items"] = items
     live = [x for x in items if x["status"] in ("open", "upcoming")]
@@ -3455,8 +3477,13 @@ try{document.documentElement.dataset.theme=localStorage.getItem("qw-theme")||"ne
   <details class="inner" id="discordBox">
     <summary>Discord</summary>
     <label class="check"><input id="discord_enabled" type="checkbox"> Send alerts to Discord</label>
-    <label>Webhook URL (channel settings &rarr; Integrations &rarr; Webhooks)</label>
+    <label>Pok&eacute;mon Center queue channel webhook (channel settings &rarr; Integrations &rarr; Webhooks)</label>
     <input id="discord_webhook" placeholder="https://discord.com/api/webhooks/...">
+    <div class="sub">Pok&eacute;mon Center queue alerts post here. Target and Walmart post here too if you leave their boxes blank.</div>
+    <label>Target restocks channel webhook (optional)</label>
+    <input id="discord_webhook_target" placeholder="Blank = same as above">
+    <label>Walmart drawings channel webhook (optional)</label>
+    <input id="discord_webhook_walmart" placeholder="Blank = same as above">
 
     <label>Bot name</label>
     <input id="discord_name" maxlength="80" placeholder="PKC Alerts">
@@ -3559,7 +3586,7 @@ try{document.documentElement.dataset.theme=localStorage.getItem("qw-theme")||"ne
 </div>
 <script>
 const TOKEN="__TOKEN__";
-const FIELDS=["discord_webhook","discord_name","discord_queue_msg","discord_headsup_msg","discord_mention","discord_user_id","news_feeds","target_watch","target_hours","target_every","target_mention","discord_target_msg","walmart_every","msrp_limits","msrp_allowance","login_url","signed_in_words","signed_out_words","ntfy_topic","min_wait","max_wait","watch_url","queue_words","block_words","headsup_words"];
+const FIELDS=["discord_webhook","discord_webhook_target","discord_webhook_walmart","discord_name","discord_queue_msg","discord_headsup_msg","discord_mention","discord_user_id","news_feeds","target_watch","target_hours","target_every","target_mention","discord_target_msg","walmart_every","msrp_limits","msrp_allowance","login_url","signed_in_words","signed_out_words","ntfy_topic","min_wait","max_wait","watch_url","queue_words","block_words","headsup_words"];
 let filled=false;
 async function api(path,body){
   const r=await fetch(path,{method:body===undefined?"GET":"POST",
