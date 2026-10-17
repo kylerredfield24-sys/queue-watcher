@@ -26,6 +26,7 @@ UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML
       "Chrome/141.0.0.0 Safari/537.36")
 GREEN, BLUE = 0x2ECC71, 0x3498DB
 BOT_NAME = "Guardian Monitor"
+PING = "@everyone"                 # who gets pinged for real restocks / new products
 BOT_PIC = "https://raw.githubusercontent.com/kylerredfield24-sys/queue-watcher/main/assets/guardian.png"
 
 
@@ -63,6 +64,7 @@ def store_products():
                     "title": p.get("title", "").strip(),
                     "url": f"{STORE}/products/{p.get('handle', '')}",
                     "image": img,
+                    "updated": max([v.get("updated_at") or "" for v in p.get("variants", [])] + [p.get("published_at") or ""]),
                     "variants": {str(v["id"]): {"title": v.get("title", ""), "price": v.get("price", ""),
                                                 "available": bool(v.get("available"))}
                                  for v in p.get("variants", [])},
@@ -81,8 +83,10 @@ def load_state():
         return None
 
 
-def save_state(products):
-    state = {"saved": int(time.time()),
+def save_state(products, last_alert=None, resent_once=None):
+    old = load_state() or {}
+    state = {"saved": int(time.time()), "last_alert": last_alert or old.get("last_alert"),
+             "resent_once": resent_once or old.get("resent_once"),
              "products": {pid: {"title": p["title"], "variants": {vid: v["available"] for vid, v in p["variants"].items()}}
                           for pid, p in products.items()}}
     with open(STATE_FILE, "w") as f:
@@ -161,6 +165,28 @@ def test_post(products):
     print(f"Test post sent using: {pick['title']} ({len(products)} products read from the live site).")
 
 
+def alert_payload(embeds):
+    return {"username": BOT_NAME, "avatar_url": BOT_PIC, "content": PING, "embeds": embeds,
+            "allowed_mentions": {"parse": ["everyone"]}}
+
+
+def resend_latest(products):
+    """Post the most recent restock alert again (with the @everyone ping)."""
+    st = load_state() or {}
+    embeds = st.get("last_alert")
+    if not embeds:              # nothing saved yet: use the most recently updated product that's in stock
+        live = [p for p in products.values() if any(v["available"] for v in p["variants"].values())]
+        if not live:
+            print("Nothing in stock to resend.")
+            return 1
+        p = max(live, key=lambda x: x["updated"])
+        embeds = [embed("back", p, [v for v in p["variants"].values() if v["available"]])]
+    embeds = [dict(e, title="🔁 " + e["title"].lstrip("🔁 ")) for e in embeds]
+    post(alert_payload(embeds[:10]))
+    print(f"Resent: {', '.join(e['description'].split('](')[0].strip('*[') for e in embeds[:10])}")
+    return 0
+
+
 def main():
     if os.environ.get("GATORS_TEST") == "true" and not WEBHOOK:
         print("TEST FAILED: the DISCORD_WEBHOOK secret is missing. Add it in Settings -> Secrets -> Actions.")
@@ -172,6 +198,8 @@ def main():
     if os.environ.get("GATORS_TEST") == "true":
         test_post(products)
         return 0                     # a test never changes what it remembers
+    if os.environ.get("GATORS_RESEND") == "true":
+        return resend_latest(products)
     old = load_state()
     if old is None:
         save_state(products)
@@ -183,6 +211,15 @@ def main():
             "color": GREEN}]})
         print(f"First run: saved {len(products)} products.")
         return 0
+    # A one-time "send the latest alert again" request (the file gators-bot/resend_once.txt).
+    once = ""
+    try:
+        once = open(os.environ.get("GATORS_RESEND_FILE") or
+                    os.path.join(os.path.dirname(os.path.abspath(__file__)), "resend_once.txt")).read().strip()
+    except Exception:
+        pass
+    if once and old.get("resent_once") != once:
+        resend_latest(products)
     found = changes(old, products)
     embeds = [embed(kind, p, vs) for kind, p, vs in found]
     if not embeds and os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch":
@@ -193,9 +230,9 @@ def main():
                            "check. It keeps checking every few minutes and posts here when something restocks.",
             "color": GREEN}]})
     for i in range(0, len(embeds), 10):          # Discord allows 10 embeds per message
-        post({"username": BOT_NAME, "avatar_url": BOT_PIC, "embeds": embeds[i:i + 10]})
+        post(alert_payload(embeds[i:i + 10]))
         time.sleep(1)
-    save_state(products)
+    save_state(products, embeds[:10] if embeds else None, once or None)
     print(f"Checked {len(products)} products: {len(found)} restock/new.")
     return 0
 

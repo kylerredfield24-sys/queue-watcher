@@ -9,6 +9,10 @@ on:
         description: "Send a TEST post to Discord (a fake restock, clearly marked)"
         type: boolean
         default: false
+      resend:
+        description: "Resend the most recent restock alert (pings @everyone)"
+        type: boolean
+        default: false
 
 concurrency:
   group: gators-watch
@@ -32,9 +36,10 @@ jobs:
         env:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
           GATORS_TEST: ${{ github.event.inputs.test || 'false' }}
+          GATORS_RESEND: ${{ github.event.inputs.resend || 'false' }}
         run: python3 gators-bot/gators_bot.py
       - name: Save what's in stock now
-        if: always() && github.event.inputs.test != 'true'
+        if: always() && github.event.inputs.test != 'true' && github.event.inputs.resend != 'true'
         uses: actions/cache/save@v4
         with:
           path: gators_state.json
