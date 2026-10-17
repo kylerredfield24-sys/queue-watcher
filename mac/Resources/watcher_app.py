@@ -23,7 +23,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs
 
 PORT = 8765
-VERSION = "3.4"   # the launcher compares this, and replaces an older copy that's still running
+VERSION = "3.5"   # the launcher compares this, and replaces an older copy that's still running
 PLATFORM = "mac"  # the Windows version switches this to "windows"
 TOKEN = secrets.token_hex(16)
 PAGE_LOAD_WAIT = 8
@@ -2166,7 +2166,7 @@ def read_headless(name, url):
 TARGET_SEARCH = "https://www.target.com/s?searchTerm=pokemon+trading+cards"
 WALMART_DRAW = "https://www.walmart.com/shop/collectibles/draw"
 WALMART_SEEN_FILE = os.path.join(DATA_DIR, "walmart_seen.json")
-CHECK_GAP = (12, 25)            # seconds between page loads inside one check (gentle on the site)
+CHECK_GAP = (5, 10)             # seconds between page loads inside one check (gentle on the site)
 BLOCK_PAUSE = 30 * 60           # if a site shows a robot check, back off this long
 CHECKER_BLOCK = _re.compile(r"robot or human|press (?:&|and) hold|verify (?:that )?(?:you are|you're) (?:a )?human|"
                             r"access denied|unusual (?:activity|traffic)|are you a robot|pardon our interruption|"
@@ -2266,7 +2266,8 @@ READ_JS = (
 checker_stop = threading.Event()
 checkers = {n: {"status": "off", "message": "Off", "last": None, "next": None, "items": [], "tab": None,
                 "paused_until": 0, "wake": threading.Event(), "alerted": set(), "block_pinged": False,
-                "lock": threading.Lock(), "hidden_fails": 0, "tab_until": 0, "how": ""}
+                "lock": threading.Lock(), "hidden_fails": 0, "tab_until": 0, "how": "",
+                "last_result": "", "last_done": None, "took": None}
             for n in ("target", "walmart")}
 
 
@@ -2664,11 +2665,20 @@ def _run_target(s):
         c["message"] = "Add Target links or turn on the search scan in Target settings."
         c["items"] = []
         return
-    items, seen = [], set()
+    items, seen, problems = [], set(), []
+    started = time.time()
     for i, url in enumerate(urls):
         if checker_stop.is_set():
             return
-        d = load_page("target", url)
+        c["message"] = f"Checking {i + 1} of {len(urls)}"
+        try:
+            d = load_page("target", url)
+        except Blocked:
+            raise
+        except Exception as e:                 # one page failing doesn't throw away the rest
+            problems.append(str(e).split(". It'll")[0])
+            log(f"Target: skipped one page this round ({problems[-1]}).")
+            continue
         check_block(d)
         if url == TARGET_SEARCH:
             found = []
@@ -2708,7 +2718,12 @@ def _run_target(s):
     instock = sum(1 for it in items if it["status"] == "in")
     c["items"] = items
     c["message"] = (f"{instock} in stock at MSRP!" if instock else
-                    f"Nothing in stock at MSRP ({len(items)} watched)")
+                    f"Nothing in stock at MSRP ({len(items)} checked)")
+    if problems:
+        c["message"] += f", {len(problems)} page{'s' if len(problems) > 1 else ''} didn't load"
+    c["took"] = time.time() - started
+    if c["took"] > 120:
+        log(f"Target check took {round(c['took'] / 60)} min ({len(urls)} pages).")
 
 
 def load_walmart_seen():
@@ -2806,6 +2821,7 @@ def checker_loop(name):
                     run(s)
                     c["status"] = "on"
                     c["block_pinged"] = False
+                    c["last_result"], c["last_done"] = c["message"], time.time()
                 except Blocked:
                     c["paused_until"] = time.time() + BLOCK_PAUSE
                     site = "Target" if name == "target" else "Walmart"
@@ -2830,7 +2846,13 @@ def checker_loop(name):
 
 
 def checkers_info():
-    return {n: {k: c[k] for k in ("status", "message", "last", "next", "items")} for n, c in checkers.items()}
+    out = {}
+    for n, c in checkers.items():
+        d = {k: c[k] for k in ("status", "message", "last", "next", "items")}
+        if c["status"] == "checking" and c.get("last_result"):
+            d["message"] = f"{c['message']} (last: {c['last_result']} at {short_time(c['last_done'])})"
+        out[n] = d
+    return out
 
 
 # ---------------- schedule ----------------
@@ -3985,7 +4007,7 @@ loadNews();setInterval(loadNews,60000);
 function showPhoneLinks(s){
   const box=document.getElementById("phoneLinks");box.innerHTML="";
   if(!s.ntfy_topic){box.textContent="Add your ntfy topic below first.";return;}
-  ["start","stop","status"].forEach(w=>{const d=document.createElement("div");
+  ["start","stop","status","log"].forEach(w=>{const d=document.createElement("div");
     const b=document.createElement("b");b.textContent=w[0].toUpperCase()+w.slice(1)+": ";
     const c=document.createElement("code");c.textContent="https://ntfy.sh/"+s.ntfy_topic+"-cmd/publish?message="+w;
     c.style.userSelect="all";c.style.wordBreak="break-all";d.append(b,c);box.append(d);});
@@ -4400,6 +4422,10 @@ def status_text():
         msg = msg.split(". It'll")[0]
         if c["status"] == "on" and c.get("last"):
             msg += f" · {short_time(c['last'])}"
+        elif c["status"] == "checking":
+            msg = msg.replace("Checking...", "starting a check")
+            if c.get("last_result"):
+                msg += f" (last: {c['last_result']} · {short_time(c['last_done'])})"
         lines.append(f"{CHECKER_ICON.get(c['status'], '•')} {label}: {msg}")
     return "\n".join(lines)
 
@@ -4441,6 +4467,10 @@ def phone_command(s, text):
         time.sleep(1)
         return phone_reply(s, "⏹️ Stopped", "Not watching Pokémon Center. Tap Start to watch again.\n"
                            + status_text())
+    if word in ("log", "logs"):
+        with lock:
+            lines = state["log"][-15:]
+        return phone_reply(s, "📋 Recent activity", "\n".join(l[:160] for l in lines) or "Nothing yet.")
     if word in ("status", "?", "check", "how"):
         return phone_reply(s, status_title(), status_text())
     return phone_reply(s, "Queue Watcher", "Use the buttons, or send start, stop or status.")
