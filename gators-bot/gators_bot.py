@@ -33,8 +33,9 @@ UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML
       "Chrome/141.0.0.0 Safari/537.36")
 GREEN, BLUE = 0x2ECC71, 0x3498DB
 BOT_NAME = "Guardian Monitor"
-ROLE = "".join(c for c in os.environ.get("GATORS_ROLE", "") if c.isdigit())                  # blank = no ping
-SINGLES_ROLE = "".join(c for c in os.environ.get("GATORS_SINGLES_ROLE", "") if c.isdigit())
+GATORS_ROLE_ID = "1561325145199616150"       # the server's "Gators Card Den" role
+ROLE = "".join(c for c in (os.environ.get("GATORS_ROLE") or GATORS_ROLE_ID) if c.isdigit())   # "none" = no ping
+SINGLES_ROLE = "".join(c for c in (os.environ.get("GATORS_SINGLES_ROLE") or ROLE) if c.isdigit())
 BOT_PIC = "https://raw.githubusercontent.com/kylerredfield24-sys/queue-watcher/main/assets/guardian.png"
 
 
@@ -305,8 +306,8 @@ def main():
     for i in range(0, len(sealed_embeds), 10):          # Discord allows 10 embeds per message
         post(alert_payload(sealed_embeds[i:i + 10]))
         time.sleep(1)
-    for i in range(0, len(single_embeds), 10):
-        post(alert_payload(single_embeds[i:i + 10], SINGLES_ROLE), s_hook)
+    for i in range(0, len(single_embeds), 10):         # one ping per check, not one per batch of cards
+        post(alert_payload(single_embeds[i:i + 10], SINGLES_ROLE if i == 0 else ""), s_hook)
         time.sleep(1)
     if len(single_found) > MAX_CARDS:
         post({"username": BOT_NAME, "avatar_url": BOT_PIC,
