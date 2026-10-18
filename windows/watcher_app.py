@@ -23,7 +23,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs
 
 PORT = 8765
-VERSION = "3.8"   # the launcher compares this, and replaces an older copy that's still running
+VERSION = "3.9"   # the launcher compares this, and replaces an older copy that's still running
 PLATFORM = "mac"  # the Windows version switches this to "windows"
 TOKEN = secrets.token_hex(16)
 PAGE_LOAD_WAIT = 8
@@ -42,6 +42,9 @@ DEFAULTS = {
     "discord_webhook": "",           # PKC queue channel (and anything without its own channel)
     "discord_webhook_target": "",    # blank = use the main webhook
     "discord_webhook_walmart": "",   # blank = use the main webhook
+    "discord_role_target": "",       # role ID to ping for Target restocks (blank = same as queue alerts)
+    "discord_role_walmart": "",      # role ID to ping for open Walmart drawings (blank = same as queue alerts)
+    "roles_v1": False,
     "discord_user_id": "",          # user ID or role ID, used with "user"/"role" below
     "discord_mention": "user",       # none | here | everyone | role | user
     "queue_words": "queue, in line, waiting room, keep your browser open, resist the urge to refresh",
@@ -263,6 +266,9 @@ def clean_settings(new):
         s["watch_url"] = DEFAULTS["watch_url"]
     s["ntfy_topic"] = "".join(c for c in s["ntfy_topic"] if c.isalnum() or c in "-_")
     s["discord_user_id"] = "".join(c for c in s["discord_user_id"] if c.isdigit())
+    for key in ("discord_role_target", "discord_role_walmart"):
+        s[key] = "".join(c for c in str(s.get(key, "")) if c.isdigit())[:25]
+    s["roles_v1"] = s.get("roles_v1") in (True, "true", 1, "1")
     for key in ("discord_webhook", "discord_webhook_target", "discord_webhook_walmart"):
         u = str(s.get(key, "")).strip()
         s[key] = u if u.startswith(("https://", "http://")) else ""
@@ -437,6 +443,12 @@ def notify_discord(s, msg, mention=True, force=False, channel=None):
         log("Discord ping sent.")
     except Exception as e:
         log(f"Discord ping failed: {e}")
+
+
+def with_role(s, key):
+    """Settings that @ the role saved under `key` (if any) instead of the queue-alert @."""
+    role = s.get(key, "")
+    return dict(s, discord_mention="role", discord_user_id=role) if role else s
 
 
 def notify_mac(msg):
@@ -2685,7 +2697,7 @@ def target_discord(s, it, test=False):
 def target_alert(s, it, test=False):
     price = f"${it['price']:.2f}" if it.get("price") is not None else "(price not shown)"
     who = s["target_mention"]
-    ss = dict(s, discord_mention=who) if who in ("here", "everyone") else s
+    ss = dict(s, discord_mention=who) if who in ("here", "everyone") else with_role(s, "discord_role_target")
     send_all(ss, "TEST: Target alert" if test else "Target restock!",
              ("TEST: " if test else "") + f"{it['name']} is in stock at Target for {price}.",
              target_discord(s, it, test), discord_mention_on=(not test and who != "none"), channel="target")
@@ -2808,7 +2820,7 @@ def _run_walmart(s):
         price = f"${it['price']:.2f}" if it["price"] is not None else ""
         if it["status"] == "open":
             log(f"Walmart drawing open: {it['name']}")
-            send_all(s, "Walmart drawing is OPEN", f"Enter now: {it['name']} {price}. {it['when']}".strip(),
+            send_all(with_role(s, "discord_role_walmart"), "Walmart drawing is OPEN", f"Enter now: {it['name']} {price}. {it['when']}".strip(),
                      f"\U0001F39F️ **Walmart drawing open:** {it['name']} {price} ({it['when']})\n<{WALMART_DRAW}>",
                      channel="walmart")
         else:
@@ -3421,7 +3433,7 @@ try{document.documentElement.dataset.theme=localStorage.getItem("qw-theme")||"ne
     <label>Check every (minutes, 2 or more)</label><input id="target_every" type="number" min="2">
     <label>Who to @ for Target restocks</label>
     <select id="target_mention">
-      <option value="same">Same as queue alerts</option>
+      <option value="same">The Target role (set in Discord settings)</option>
       <option value="none">Nobody</option>
       <option value="here">@here</option>
       <option value="everyone">@everyone</option>
@@ -3482,8 +3494,12 @@ try{document.documentElement.dataset.theme=localStorage.getItem("qw-theme")||"ne
     <div class="sub">Pok&eacute;mon Center queue alerts post here. Target and Walmart post here too if you leave their boxes blank.</div>
     <label>Target restocks channel webhook (optional)</label>
     <input id="discord_webhook_target" placeholder="Blank = same as above">
+    <label>Target role ID to @ (blank = same as the queue alert)</label>
+    <input id="discord_role_target" placeholder="1561324538686611467">
     <label>Walmart drawings channel webhook (optional)</label>
     <input id="discord_webhook_walmart" placeholder="Blank = same as above">
+    <label>Walmart role ID to @ when a drawing opens (blank = same as the queue alert)</label>
+    <input id="discord_role_walmart" placeholder="1561324931176734760">
 
     <label>Bot name</label>
     <input id="discord_name" maxlength="80" placeholder="PKC Alerts">
@@ -3586,7 +3602,7 @@ try{document.documentElement.dataset.theme=localStorage.getItem("qw-theme")||"ne
 </div>
 <script>
 const TOKEN="__TOKEN__";
-const FIELDS=["discord_webhook","discord_webhook_target","discord_webhook_walmart","discord_name","discord_queue_msg","discord_headsup_msg","discord_mention","discord_user_id","news_feeds","target_watch","target_hours","target_every","target_mention","discord_target_msg","walmart_every","msrp_limits","msrp_allowance","login_url","signed_in_words","signed_out_words","ntfy_topic","min_wait","max_wait","watch_url","queue_words","block_words","headsup_words"];
+const FIELDS=["discord_webhook","discord_webhook_target","discord_webhook_walmart","discord_role_target","discord_role_walmart","discord_name","discord_queue_msg","discord_headsup_msg","discord_mention","discord_user_id","news_feeds","target_watch","target_hours","target_every","target_mention","discord_target_msg","walmart_every","msrp_limits","msrp_allowance","login_url","signed_in_words","signed_out_words","ntfy_topic","min_wait","max_wait","watch_url","queue_words","block_words","headsup_words"];
 let filled=false;
 async function api(path,body){
   const r=await fetch(path,{method:body===undefined?"GET":"POST",
@@ -4482,6 +4498,25 @@ def apply_branding():
         log(f"Couldn't update the Discord bot's name/picture yet: {msg}")
 
 
+ROLE_IDS = {"pkc": "1561325379963068538", "target": "1561324538686611467", "walmart": "1561324931176734760"}
+
+
+def apply_roles():
+    """Once: ping the server's alert roles (Pokémon Center / Target Restocks / Walmart Raffles)."""
+    with settings_lock:
+        s = load_settings()
+        if s["roles_v1"]:
+            return
+        s["discord_mention"], s["discord_user_id"] = "role", ROLE_IDS["pkc"]
+        s["discord_role_target"] = s["discord_role_target"] or ROLE_IDS["target"]
+        s["discord_role_walmart"] = s["discord_role_walmart"] or ROLE_IDS["walmart"]
+        if s["target_mention"] in ("here", "everyone"):
+            s["target_mention"] = "same"
+        s["roles_v1"] = True
+        save_settings(s)
+    log("Discord alerts now ping the Pokémon Center, Target Restocks and Walmart Raffles roles.")
+
+
 # ---------------- phone controls (ntfy) ----------------
 # Send "start", "stop" or "status" to your private command topic (your topic + "-cmd") and Guardian Monitor
 # does it and answers on your normal topic. Replies come with Start / Stop / Status buttons.
@@ -5104,6 +5139,7 @@ def main():
     threading.Thread(target=news_loop, daemon=True).start()
     threading.Thread(target=update_loop, daemon=True).start()
     threading.Thread(target=apply_branding, daemon=True).start()
+    apply_roles()
     threading.Thread(target=health_loop, daemon=True).start()
     threading.Thread(target=phone_control_loop, daemon=True).start()
     for n in checkers:

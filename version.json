@@ -1,22 +1,22 @@
 {
-  "version": "3.8",
-  "notes": "3.8: separate Discord channels for Pok\u00e9mon Center queues, Target restocks, and Walmart drawings (Discord section). Extra channels get the Guardian Monitor name and logo automatically.",
+  "version": "3.9",
+  "notes": "3.9: alerts ping their Discord roles: Pok\u00e9mon Center queues @Pok\u00e9mon Center, Target restocks @Target Restocks, open Walmart drawings @Walmart Raffles. Your webhooks and settings stay the same.",
   "files": {
     "mac": {
-      "Resources/watcher_app.py": "7a69053148b7c08fabb5d4359e1827eec64b777eb694c43946cdac3a0177ecaf",
+      "Resources/watcher_app.py": "2283a393d15110f431a83738e05ffb4d4541ddf7ab996c7e24c2b30e92d8f54c",
       "Resources/panel.js": "1ca5a1d6d0fd91e7526c6be3c75955b16928013fb0243bde1f4cdd37b7fa6e40",
-      "Resources/app_version": "5b02189ab1f9bb5caa7611320f35cd6a072da88db0533f62c4b3194f8bee4b79",
+      "Resources/app_version": "3ec15f7f82d24dbcd050ce11c3994d981499b029772da41c37a2cd0acce87f6e",
       "Resources/panel_version": "022804d19c8fe566dc00dca4721c1eadf6ed71164d647a2e77493ac87c4fe3a6",
       "Resources/AppIcon.icns": "6b37b4479b291aba49e8a189be4dfdfef8727216e8a1fd48b2ff0b22956bdb5c",
       "Resources/guardian_avatar.png": "f1f0d53666d79a1c9e0d788861d6fa47e09b3d4f5fc6bcd2eb388990563c7ad6",
       "MacOS/QueueWatcher": "8278214b1cf0317480d859208b60e2848ac6bc6b14c1ba344f656b9d1cfb8c48",
-      "Info.plist": "42dd9a7c389319a7bff351d7567b1e5f58de494454ece4bf1e5dddd7388743f6"
+      "Info.plist": "6d18e9769498e92791b3dc7d888ef81011b04aae62202709af79d17e9f6a3655"
     },
     "windows": {
-      "watcher_app.py": "494f71abd2be53ee0aabb6e1ecfb2c93c061c126630b235627a383ca3a8f2310",
-      "winplat.py": "fcf0a4f874b999aa8d48741dd652f441d7ed5865e2f68e4f950b2e6e067080a4",
+      "watcher_app.py": "a3d36f645a67a957fbe8851d05c0ddb781415e5eecfab503a3abcfd28577dddf",
+      "winplat.py": "8228a9bc7b7be280842a4f11b6226aca0f43f4a83bd5d9ca3c166862ea67df4c",
       "launcher.pyw": "8e8fc021d3aaad76e3cc9a864e401095882c5f7ceedee8bd185d4200af4f4039",
-      "app_version": "5b02189ab1f9bb5caa7611320f35cd6a072da88db0533f62c4b3194f8bee4b79",
+      "app_version": "3ec15f7f82d24dbcd050ce11c3994d981499b029772da41c37a2cd0acce87f6e",
       "QueueWatcher.ico": "e7595b3aaedf2f63af463c789f9867448880ce238fc94752a746204b15954557",
       "guardian_avatar.png": "f1f0d53666d79a1c9e0d788861d6fa47e09b3d4f5fc6bcd2eb388990563c7ad6"
     }

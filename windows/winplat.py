@@ -981,6 +981,8 @@ def main():
     threading.Thread(target=W.update_loop, daemon=True).start()
     threading.Thread(target=W.phone_control_loop, daemon=True).start()
     threading.Thread(target=W.health_loop, daemon=True).start()
+    threading.Thread(target=W.apply_branding, daemon=True).start()
+    W.apply_roles()
     for n in W.checkers:
         threading.Thread(target=W.checker_loop, args=(n,), daemon=True).start()
     W.write_window_key()
