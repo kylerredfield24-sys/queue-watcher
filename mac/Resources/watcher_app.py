@@ -23,7 +23,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs
 
 PORT = 8765
-VERSION = "4.0"   # the launcher compares this, and replaces an older copy that's still running
+VERSION = "4.1"   # the launcher compares this, and replaces an older copy that's still running
 PLATFORM = "mac"  # the Windows version switches this to "windows"
 TOKEN = secrets.token_hex(16)
 PAGE_LOAD_WAIT = 8
@@ -569,6 +569,42 @@ def site_host(url):
 BUSY_PATHS = ("cart", "checkout", "login", "signin", "sign-in", "account", "payment")
 
 
+def site_tabs(url):
+    """Every open tab on this site that's safe to use, as [(window id, tab id), ...]."""
+    host = site_host(url)
+    if not host:
+        return []
+    out, _ = osa(f'''
+        {IF_CHROME}
+        tell application "Google Chrome"
+            set found to ""
+            repeat with w in windows
+                repeat with t in tabs of w
+                    set u to URL of t
+                    if u contains "{as_str(host)}" then
+                        set found to found & (id of w as text) & "," & (id of t as text) & "," & u & linefeed
+                    end if
+                end repeat
+            end repeat
+            return found
+        end tell''', timeout=30)
+    rows = [l.split(",", 2) for l in out.splitlines()]
+    return [(r[0], r[1]) for r in rows if len(r) == 3 and r[0].isdigit() and r[1].isdigit()
+            and not any(p in r[2].lower() for p in BUSY_PATHS)]
+
+
+def readable_tab(url, skip=None):
+    """A tab on this site that Chrome lets the app read. Each Chrome profile has its own
+    "Allow JavaScript from Apple Events" setting, so a tab in one profile may work when another doesn't."""
+    for tab in site_tabs(url):
+        if tab == skip:
+            continue
+        out, err = run_js(tab, "document.title + 'QW'")
+        if out and not err:
+            return tab
+    return None
+
+
 def find_tab(url, prefer_window=None):
     """An already-open Chrome tab on this site that's safe to use, as (window id, tab id).
     A tab in `prefer_window` (the app's own window) is used even on a sign-in/account page."""
@@ -603,7 +639,7 @@ def find_tab(url, prefer_window=None):
 
 def open_window(url):
     """Use a tab that's already on the site, or open one. Returns ((window, tab), error)."""
-    found = find_tab(url)
+    found = readable_tab(url) or find_tab(url)
     if found:
         log("Found an open tab on this site. Using it.")
         return found, ""
@@ -1211,6 +1247,14 @@ def watch(s, stop):
                 fails = 0
                 if text_blocked:
                     js_fails += 1
+                    if js_fails >= 2 and "turned off" in last_js_error["text"].lower():
+                        other = readable_tab(s["watch_url"], skip=win)
+                        if other:                 # a Pokémon Center tab in a Chrome profile that allows it
+                            log("This tab's Chrome profile blocks reading pages. Switched to a Pokémon Center "
+                                "tab in your other Chrome profile, which allows it.")
+                            win, js_fails = other, 0
+                            set_state(js_warning=False)
+                            continue
                     if js_fails >= 2 and headless_available() and \
                             "turned off" in last_js_error["text"].lower():
                         return watch_hidden(s, stop, win, queue_words, block_words, headsup_words)

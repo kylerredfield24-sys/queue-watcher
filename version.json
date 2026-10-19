@@ -1,22 +1,22 @@
 {
-  "version": "4.0",
-  "notes": "4.0: if the Pok\u00e9mon Center tab gets lost on Mac, it finds it again or opens a new one and keeps watching (instead of stopping). Update from your phone: you get an 'Update ready' notification with an Update now button, or send 'update'.",
+  "version": "4.1",
+  "notes": "4.1 (Mac): if a Pok\u00e9mon Center tab is in a Chrome profile that blocks reading pages, it switches to one in a profile that allows it, instead of going to backup mode.",
   "files": {
     "mac": {
-      "Resources/watcher_app.py": "d207f8cd3c4ad542f73d46cfa02b4ee41e3d49cca9bb8a4ea69025df8dcd9a23",
+      "Resources/watcher_app.py": "c5caf3464215b360637d253ff9a97334ac58c6342acc36a0cbfd64d9424431a1",
       "Resources/panel.js": "1ca5a1d6d0fd91e7526c6be3c75955b16928013fb0243bde1f4cdd37b7fa6e40",
-      "Resources/app_version": "5ca797740e932dd836206d2b4bea825c83bc47e25e45006d0a2b62fe71be40b6",
+      "Resources/app_version": "ccc8c8540a4da7ae55474bbcafcf335a2dde73265b3bbd29ffa047c08777f307",
       "Resources/panel_version": "022804d19c8fe566dc00dca4721c1eadf6ed71164d647a2e77493ac87c4fe3a6",
       "Resources/AppIcon.icns": "6b37b4479b291aba49e8a189be4dfdfef8727216e8a1fd48b2ff0b22956bdb5c",
       "Resources/guardian_avatar.png": "f1f0d53666d79a1c9e0d788861d6fa47e09b3d4f5fc6bcd2eb388990563c7ad6",
       "MacOS/QueueWatcher": "8278214b1cf0317480d859208b60e2848ac6bc6b14c1ba344f656b9d1cfb8c48",
-      "Info.plist": "f1227863e4787ebe76d0b93027c9073d8a856b454680c13ff3843a2de3671b3d"
+      "Info.plist": "dfe99f9b4e5f7debb38045af3dbf3299ab10830d473b91971f13314a3840b645"
     },
     "windows": {
-      "watcher_app.py": "731fda02c92693e395737ce36895e04e28da5fe7a62dfa891b0cde0b99b7f704",
-      "winplat.py": "174f6ed156bc55cbcf7acf00222d2ccc7ac89223cb1ae7f58d7be673348596c0",
+      "watcher_app.py": "e995aeb37e682079ac4a6d3c4532348c3980f9cf1b24dbc5901489a73ccf124b",
+      "winplat.py": "9a44879168a95d934a5f1325dc5ee6aa5fccaf180411523f30bee7455bdeb44a",
       "launcher.pyw": "8e8fc021d3aaad76e3cc9a864e401095882c5f7ceedee8bd185d4200af4f4039",
-      "app_version": "5ca797740e932dd836206d2b4bea825c83bc47e25e45006d0a2b62fe71be40b6",
+      "app_version": "ccc8c8540a4da7ae55474bbcafcf335a2dde73265b3bbd29ffa047c08777f307",
       "QueueWatcher.ico": "e7595b3aaedf2f63af463c789f9867448880ce238fc94752a746204b15954557",
       "guardian_avatar.png": "f1f0d53666d79a1c9e0d788861d6fa47e09b3d4f5fc6bcd2eb388990563c7ad6"
     }

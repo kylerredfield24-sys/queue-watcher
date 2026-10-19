@@ -380,6 +380,10 @@ def relocate(win, s):
     return found
 
 
+def readable_tab(url, skip=None):
+    return None                         # Windows reads pages through its own Chrome; no per-profile block
+
+
 def window_exists(win):
     if not win:
         return False
@@ -1009,7 +1013,7 @@ def main():
 
 
 # ---------------- hook everything in ----------------
-REPLACE = ["relocate", "chrome_running", "tab_do", "tab_get", "find_tab", "open_window", "window_exists", "reload_tab", "close_tab",
+REPLACE = ["readable_tab", "relocate", "chrome_running", "tab_do", "tab_get", "find_tab", "open_window", "window_exists", "reload_tab", "close_tab",
            "go_to", "run_js", "wait_for_load", "read_page", "js_error_help", "bring_to_front", "checker_tab", "background_tab",
            "close_checker_tab", "open_link", "open_in_chrome", "chrome_user_agent", "dump_dom", "restart_app",
            "kc_save", "kc_load", "kc_delete", "notify_mac", "choose_file", "sips", "pick_picture",
