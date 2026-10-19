@@ -1,0 +1,44 @@
+name: Guardian Monitor - update notification
+
+# When a new version is published (version.json changes), send your phone an
+# "Update ready" notification with an Update now button right away.
+on:
+  push:
+    branches: [main]
+    paths: [version.json]
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: version.json
+          sparse-checkout-cone-mode: false
+      - name: Tell your phone
+        env:
+          NTFY_TOPICS: ${{ secrets.NTFY_TOPICS }}
+        run: |
+          python3 - <<'PY'
+          import json, os, urllib.request
+          topics = [t.strip() for t in os.environ.get("NTFY_TOPICS", "").replace("\n", ",").split(",") if t.strip()]
+          if not topics:
+              print("No NTFY_TOPICS secret set, so no phone notification was sent.")
+              raise SystemExit(0)
+          man = json.load(open("version.json"))
+          v, notes = man.get("version", "?"), (man.get("notes") or "A new version of Guardian Monitor is out.")[:300]
+          for t in topics:
+              cmd = f"https://ntfy.sh/{t}-cmd"
+              body = {"topic": t, "title": f"⬇️ Update {v} is ready", "priority": 3,
+                      "message": notes + "\nTap Update now to install it.",
+                      "actions": [{"action": "http", "label": "Update now", "url": cmd, "method": "POST",
+                                   "body": "update", "clear": True},
+                                  {"action": "http", "label": "Status", "url": cmd, "method": "POST",
+                                   "body": "status", "clear": True}]}
+              req = urllib.request.Request("https://ntfy.sh/", data=json.dumps(body).encode(),
+                                           headers={"Content-Type": "application/json"})
+              urllib.request.urlopen(req, timeout=20)
+              print(f"Sent the {v} update notification.")
+          PY
