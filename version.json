@@ -1,22 +1,22 @@
 {
-  "version": "4.1",
-  "notes": "4.1 (Mac): if a Pok\u00e9mon Center tab is in a Chrome profile that blocks reading pages, it switches to one in a profile that allows it, instead of going to backup mode.",
+  "version": "4.2",
+  "notes": "4.2: Best Buy checker. Pok\u00e9mon card products at MSRP (no merch) plus Best Buy invite drawings, with its own Discord channel and @bestbuy role. Set channels from your phone (webhook bestbuy <link>), and turn store checkers on/off (bestbuy on/off).",
   "files": {
     "mac": {
-      "Resources/watcher_app.py": "c5caf3464215b360637d253ff9a97334ac58c6342acc36a0cbfd64d9424431a1",
+      "Resources/watcher_app.py": "24389b99609b8d5b159057ead329041bf004da4f8278584dd426188d606a06bb",
       "Resources/panel.js": "1ca5a1d6d0fd91e7526c6be3c75955b16928013fb0243bde1f4cdd37b7fa6e40",
-      "Resources/app_version": "ccc8c8540a4da7ae55474bbcafcf335a2dde73265b3bbd29ffa047c08777f307",
+      "Resources/app_version": "c84057e14bca4c902bb887688cbb3bec69461b864a5d804b8e1e4e06d3bba148",
       "Resources/panel_version": "022804d19c8fe566dc00dca4721c1eadf6ed71164d647a2e77493ac87c4fe3a6",
       "Resources/AppIcon.icns": "6b37b4479b291aba49e8a189be4dfdfef8727216e8a1fd48b2ff0b22956bdb5c",
       "Resources/guardian_avatar.png": "f1f0d53666d79a1c9e0d788861d6fa47e09b3d4f5fc6bcd2eb388990563c7ad6",
       "MacOS/QueueWatcher": "8278214b1cf0317480d859208b60e2848ac6bc6b14c1ba344f656b9d1cfb8c48",
-      "Info.plist": "dfe99f9b4e5f7debb38045af3dbf3299ab10830d473b91971f13314a3840b645"
+      "Info.plist": "320b5d56a2e0cbc0b35e6746144021b7492185775e12f16a903416b19fb61c3d"
     },
     "windows": {
-      "watcher_app.py": "e995aeb37e682079ac4a6d3c4532348c3980f9cf1b24dbc5901489a73ccf124b",
+      "watcher_app.py": "5a292154b70ca10276847fd266195c56089a3cc17c199f67687f9564f06f1911",
       "winplat.py": "9a44879168a95d934a5f1325dc5ee6aa5fccaf180411523f30bee7455bdeb44a",
       "launcher.pyw": "8e8fc021d3aaad76e3cc9a864e401095882c5f7ceedee8bd185d4200af4f4039",
-      "app_version": "ccc8c8540a4da7ae55474bbcafcf335a2dde73265b3bbd29ffa047c08777f307",
+      "app_version": "c84057e14bca4c902bb887688cbb3bec69461b864a5d804b8e1e4e06d3bba148",
       "QueueWatcher.ico": "e7595b3aaedf2f63af463c789f9867448880ce238fc94752a746204b15954557",
       "guardian_avatar.png": "f1f0d53666d79a1c9e0d788861d6fa47e09b3d4f5fc6bcd2eb388990563c7ad6"
     }
