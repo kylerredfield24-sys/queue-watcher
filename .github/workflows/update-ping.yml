@@ -23,7 +23,13 @@ jobs:
         run: |
           python3 - <<'PY'
           import json, os, urllib.request
-          topics = [t.strip() for t in os.environ.get("NTFY_TOPICS", "").replace("\n", ",").split(",") if t.strip()]
+          raw = os.environ.get("NTFY_TOPICS", "").replace("\n", ",").replace(" ", ",").split(",")
+          topics = []
+          for t in raw:   # accepts "my-topic", "ntfy.sh/my-topic" or "https://ntfy.sh/my-topic"
+              t = t.strip().split("://")[-1]
+              t = t.split("ntfy.sh/")[-1].strip("/ ")
+              if t and t not in topics:
+                  topics.append(t)
           if not topics:
               print("No NTFY_TOPICS secret set, so no phone notification was sent.")
               raise SystemExit(0)
