@@ -328,7 +328,7 @@ def tab_get(win, action, timeout=20):
     return "", "not used on Windows"
 
 
-def find_tab(url):
+def find_tab(url, prefer_window=None):
     host = W.site_host(url)
     targets = page_targets()
     if not host or not targets:
@@ -369,6 +369,15 @@ def open_window(url):
         if not stay_back:
             bring_to_front(win)
     return win, err
+
+
+def relocate(win, s):
+    """Windows: look for the site in Guardian Monitor's own Chrome. If that window was closed,
+    watching stops and tells you (it doesn't reopen a window you closed)."""
+    found = find_tab(s["watch_url"])
+    if found and found != win:
+        W.log("Found the Pokémon Center tab again. Still watching.")
+    return found
 
 
 def window_exists(win):
@@ -1000,7 +1009,7 @@ def main():
 
 
 # ---------------- hook everything in ----------------
-REPLACE = ["chrome_running", "tab_do", "tab_get", "find_tab", "open_window", "window_exists", "reload_tab", "close_tab",
+REPLACE = ["relocate", "chrome_running", "tab_do", "tab_get", "find_tab", "open_window", "window_exists", "reload_tab", "close_tab",
            "go_to", "run_js", "wait_for_load", "read_page", "js_error_help", "bring_to_front", "checker_tab", "background_tab",
            "close_checker_tab", "open_link", "open_in_chrome", "chrome_user_agent", "dump_dom", "restart_app",
            "kc_save", "kc_load", "kc_delete", "notify_mac", "choose_file", "sips", "pick_picture",

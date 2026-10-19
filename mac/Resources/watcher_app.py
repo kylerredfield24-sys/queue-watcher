@@ -23,7 +23,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs
 
 PORT = 8765
-VERSION = "3.9"   # the launcher compares this, and replaces an older copy that's still running
+VERSION = "4.0"   # the launcher compares this, and replaces an older copy that's still running
 PLATFORM = "mac"  # the Windows version switches this to "windows"
 TOKEN = secrets.token_hex(16)
 PAGE_LOAD_WAIT = 8
@@ -45,6 +45,7 @@ DEFAULTS = {
     "discord_role_target": "",       # role ID to ping for Target restocks (blank = same as queue alerts)
     "discord_role_walmart": "",      # role ID to ping for open Walmart drawings (blank = same as queue alerts)
     "roles_v1": False,
+    "update_pinged": "",             # newest version your phone was already told about
     "discord_user_id": "",          # user ID or role ID, used with "user"/"role" below
     "discord_mention": "user",       # none | here | everyone | role | user
     "queue_words": "queue, in line, waiting room, keep your browser open, resist the urge to refresh",
@@ -269,6 +270,7 @@ def clean_settings(new):
     for key in ("discord_role_target", "discord_role_walmart"):
         s[key] = "".join(c for c in str(s.get(key, "")) if c.isdigit())[:25]
     s["roles_v1"] = s.get("roles_v1") in (True, "true", 1, "1")
+    s["update_pinged"] = str(s.get("update_pinged", ""))[:20]
     for key in ("discord_webhook", "discord_webhook_target", "discord_webhook_walmart"):
         u = str(s.get(key, "")).strip()
         s[key] = u if u.startswith(("https://", "http://")) else ""
@@ -567,8 +569,9 @@ def site_host(url):
 BUSY_PATHS = ("cart", "checkout", "login", "signin", "sign-in", "account", "payment")
 
 
-def find_tab(url):
-    """An already-open Chrome tab on this site that's safe to use, as (window id, tab id)."""
+def find_tab(url, prefer_window=None):
+    """An already-open Chrome tab on this site that's safe to use, as (window id, tab id).
+    A tab in `prefer_window` (the app's own window) is used even on a sign-in/account page."""
     host = site_host(url)
     if not host:
         return None
@@ -586,11 +589,15 @@ def find_tab(url):
             end repeat
             return found
         end tell''', timeout=30)
-    for line in out.splitlines():
-        parts = line.split(",", 2)
-        if len(parts) == 3 and parts[0].isdigit() and parts[1].isdigit():
-            if not any(p in parts[2].lower() for p in BUSY_PATHS):
-                return parts[0], parts[1]
+    rows = [l.split(",", 2) for l in out.splitlines()]
+    rows = [r for r in rows if len(r) == 3 and r[0].isdigit() and r[1].isdigit()]
+    if prefer_window:
+        for r in rows:
+            if r[0] == str(prefer_window):
+                return r[0], r[1]
+    for r in rows:
+        if not any(p in r[2].lower() for p in BUSY_PATHS):
+            return r[0], r[1]
     return None
 
 
@@ -647,14 +654,39 @@ def window_exists(win):
     return None      # includes Chrome being quit
 
 
+REOPENS = []
+
+
 def relocate(win, s):
-    """Our tab seems gone: look for the site in any open tab before giving up."""
-    found = find_tab(s["watch_url"])
+    """Our tab seems gone: look for the site in any open tab (our own window first). If there's
+    none, open a fresh Pokémon Center window instead of giving up."""
+    found = find_tab(s["watch_url"], prefer_window=win[0] if win else None)
     if found:
         if found != win:
             log("Found the Pokémon Center tab again. Still watching.")
         return found
+    if not chrome_running():
+        return None
+    now = time.time()
+    REOPENS[:] = [t for t in REOPENS if now - t < 1800]
+    if len(REOPENS) >= 3:                  # never pile up windows if something's really wrong
+        log("Opened 3 new Pokémon Center windows in 30 minutes already. Not opening another.")
+        return None
+    REOPENS.append(now)
+    log("Couldn't find the Pokémon Center tab. Opening a new one and watching again.")
+    again, err = open_window(s["watch_url"])
+    if again:
+        return again
+    log(f"Couldn't open Pokémon Center: {err}")
     return None
+
+
+def tab_gone(win, stop):
+    """True only if the tab is missing twice in a row (Chrome sometimes answers wrong for a moment)."""
+    if window_exists(win) is not False:
+        return False
+    stop.wait(2)
+    return window_exists(win) is False
 
 
 def reload_tab(win):
@@ -904,6 +936,9 @@ def check_sign_in(win, s, text, stop):
                 return
             result = "still looks signed out afterwards"
         log(f"Automatic sign-in didn't work: {result}.")
+        if result != "still looks signed out afterwards":
+            go_to(win, s["watch_url"])             # don't leave the tab sitting on the sign-in page
+            wait_for_load(win, stop)
         send_all(s, "Sign in needed", f"Couldn't sign you in to {host} ({result}). "
                  "Please sign in in the Chrome window before the drop. Still watching.")
     else:
@@ -1155,12 +1190,15 @@ def watch(s, stop):
                 continue
 
             exists = window_exists(win)
-            if exists is False:
+            if exists is False and tab_gone(win, stop):
                 again = relocate(win, s)
                 if not again:
-                    stopped_unexpectedly(s, "no Pokémon Center tab is open in Chrome anymore.")
+                    stopped_unexpectedly(s, "no Pokémon Center tab is open in Chrome, and it couldn't open a new one.")
                     return
                 win, exists = again, True
+                wait_for_load(win, stop)
+            elif exists is False:
+                exists = True
 
             url, title, text, text_blocked, url_failed = read_page(win)
             if exists is None or url_failed:
@@ -1232,12 +1270,13 @@ def watch(s, stop):
             wait = int(random.randint(s["min_wait"], s["max_wait"]) * (2 if health["level"] in ("warm", "hot") else 1))
             if stop.wait(wait):
                 break
-            if window_exists(win) is False:
+            if tab_gone(win, stop):
                 again = relocate(win, s)
                 if not again:
-                    stopped_unexpectedly(s, "no Pokémon Center tab is open in Chrome anymore.")
+                    stopped_unexpectedly(s, "no Pokémon Center tab is open in Chrome, and it couldn't open a new one.")
                     return
                 win = again
+                continue                           # a fresh tab just loaded; no need to refresh it
             reload_tab(win)
 
         set_state(status="idle", message="Stopped. Press Start to watch again.")
@@ -4649,7 +4688,19 @@ def phone_command(s, text):
         return phone_reply(s, "📋 Recent activity", "\n".join(l[:160] for l in lines) or "Nothing yet.")
     if word in ("status", "?", "check", "how"):
         return phone_reply(s, status_title(), status_text())
-    return phone_reply(s, "Guardian Monitor", "Use the buttons, or send start, stop or status.")
+    if word in ("update", "upgrade", "install"):
+        check_update()
+        if not update_state["available"]:
+            if update_state.get("error"):
+                return phone_reply(s, "⚠️ Couldn't check for updates", update_state["error"])
+            return phone_reply(s, "👍 Already up to date", f"Guardian Monitor {VERSION} is the newest version.")
+        phone_reply(s, f"⬇️ Updating to {update_state['latest']}",
+                    "Installing now. It restarts by itself and picks back up where it was.")
+        ok, msg = apply_update()
+        if not ok:
+            return phone_reply(s, "⚠️ Update didn't install", msg)
+        return True
+    return phone_reply(s, "Guardian Monitor", "Use the buttons, or send start, stop, status, log or update.")
 
 
 def phone_control_loop():
@@ -4979,11 +5030,36 @@ def restart_app():
         os.execv(sys.executable, [sys.executable, os.path.abspath(__file__)])
 
 
+def update_ping(s):
+    """Once per new version: tell your phone, with an Update now button."""
+    latest = update_state["latest"]
+    if not s["ntfy_topic"] or not latest or s.get("update_pinged") == latest:
+        return
+    try:
+        body = {"topic": s["ntfy_topic"], "title": f"⬇️ Update {latest} is ready",
+                "message": (update_state.get("notes") or "A new version of Guardian Monitor is out.")[:300]
+                           + "\nTap Update now to install it (or send \"update\").", "priority": 3,
+                "actions": [{"action": "http", "label": "Update now", "url": f"{NTFY_BASE}/{cmd_topic(s)}",
+                             "method": "POST", "body": "update", "clear": True},
+                            {"action": "http", "label": "Status", "url": f"{NTFY_BASE}/{cmd_topic(s)}",
+                             "method": "POST", "body": "status", "clear": True}]}
+        req = urllib.request.Request(f"{NTFY_BASE}/", data=json.dumps(body).encode("utf-8"),
+                                     headers={"Content-Type": "application/json"})
+        fetch(req, timeout=10)
+        with settings_lock:
+            fresh = load_settings()
+            fresh["update_pinged"] = latest
+            save_settings(fresh)
+    except Exception as e:
+        log(f"Couldn't tell your phone about the update: {e}")
+
+
 def update_loop():
     time.sleep(20)
     while True:
         if check_update() and update_state["available"]:
             log(f"Update {update_state['latest']} is ready. Click Update in the app.")
+            update_ping(load_settings())
         time.sleep(UPDATE_EVERY)
 
 
