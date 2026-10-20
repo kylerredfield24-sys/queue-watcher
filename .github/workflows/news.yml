@@ -1,0 +1,42 @@
+name: Guardian Monitor - Pokémon TCG news
+
+on:
+  schedule:
+    - cron: "7,22,37,52 * * * *"   # every 15 minutes
+  workflow_dispatch:
+    inputs:
+      test:
+        description: "Send a TEST post to Discord (the newest real story, no ping)"
+        type: boolean
+        default: false
+
+concurrency:
+  group: news-watch
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: news-bot
+      - name: Remember which stories were posted
+        uses: actions/cache/restore@v4
+        with:
+          path: news_state.json
+          key: news-state-${{ github.run_id }}
+          restore-keys: news-state-
+      - name: Check Pokémon TCG news
+        env:
+          DISCORD_WEBHOOK_NEWS: ${{ secrets.DISCORD_WEBHOOK_NEWS }}
+          NEWS_ROLE: ${{ vars.NEWS_ROLE }}
+          NEWS_TEST: ${{ github.event.inputs.test || 'false' }}
+        run: python3 news-bot/news_bot.py
+      - name: Save which stories were posted
+        if: always() && github.event.inputs.test != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: news_state.json
+          key: news-state-${{ github.run_id }}
