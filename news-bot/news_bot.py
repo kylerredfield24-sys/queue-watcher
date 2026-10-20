@@ -43,6 +43,9 @@ TCG = re.compile(r"\btcg\b|trading card|card game|\bcards?\b|\bset\b|expansion|b
 NOT_TCG = re.compile(r"\bpok[eé]mon go\b|\bunite\b|\banime\b|\bepisode\b|\bmovie\b|\bscarlet and violet dlc\b|"
                      r"\bpok[eé]mon sleep\b|\bmasters ex\b|\bcafe\b|\bplush\b|\bvideo game\b|\bswitch\b|\bstream\b",
                      re.I)
+# Leaks and rumors get an "Unconfirmed" label and no ping; only confirmed news pings your role.
+RUMOR = re.compile(r"\brumou?r|\bleak|speculat|reportedly|unconfirmed|\bdatamin|\bpossibl|\bmight\b|could be|"
+                   r"\bhint|\bteas", re.I)
 NS = {"media": "http://search.yahoo.com/mrss/", "content": "http://purl.org/rss/1.0/modules/content/",
       "atom": "http://www.w3.org/2005/Atom"}
 
@@ -116,10 +119,16 @@ def is_tcg(it):
     return bool(TCG.search(blob)) and not (NOT_TCG.search(it["title"]) and not re.search(r"\btcg\b|card", blob, re.I))
 
 
+def unconfirmed(it):
+    return bool(RUMOR.search(it["title"]) or re.search(r"\brumou?rs?\b|\bleaks?\b", it["cats"], re.I))
+
+
 def embed(it, test=False):
-    e = {"title": ("\U0001F9EA TEST: " if test else "\U0001F4F0 ") + it["title"][:240], "url": it["link"],
-         "description": it["summary"][:350], "color": 0xF1C40F if test else 0x3498DB,
-         "footer": {"text": f"Guardian Monitor · {it['source']}"}}
+    rumor = unconfirmed(it)
+    lead = "\U0001F9EA TEST: " if test else ("\u26A0\uFE0F Unconfirmed: " if rumor else "\U0001F4F0 ")
+    e = {"title": lead + it["title"][:230], "url": it["link"],
+         "description": it["summary"][:350], "color": 0xF1C40F if test else (0xE67E22 if rumor else 0x3498DB),
+         "footer": {"text": f"Guardian Monitor · {it['source']}" + (" · rumor/leak, not official yet" if rumor else "")}}
     if it["image"].startswith("http"):
         e["image"] = {"url": it["image"]}
     return e
@@ -203,7 +212,7 @@ def main():
         out.append(x)
     out = out[-MAX_POSTS:]
     for x in out:
-        post(payload([embed(x)]))
+        post(payload([embed(x)], ping=not unconfirmed(x)))
         time.sleep(1.2)
     seen.update(x["id"] for x in stories)
     with open(STATE_FILE, "w") as f:
