@@ -23,7 +23,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs
 
 PORT = 8765
-VERSION = "4.3"   # the launcher compares this, and replaces an older copy that's still running
+VERSION = "4.4"   # the launcher compares this, and replaces an older copy that's still running
 PLATFORM = "mac"  # the Windows version switches this to "windows"
 TOKEN = secrets.token_hex(16)
 PAGE_LOAD_WAIT = 8
@@ -3394,7 +3394,7 @@ PAGE = r"""<!doctype html>
 --line:#2e323b;--warn-bg:#3a3214;--warn-text:#f3dc8a}}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--text);font:15px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
-.wrap{max-width:560px;margin:0 auto;padding:24px 16px 40px}
+.wrap{max-width:600px;margin:0 auto;padding:24px 16px 40px}
 h1{font-size:22px;margin:0 0 16px}
 .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px;margin-bottom:14px}
 .status{display:flex;align-items:center;gap:12px}
@@ -3487,6 +3487,32 @@ details.inner>summary{font-weight:600}
 .switch input:checked+span{background:var(--go)}
 .switch input:checked+span:before{transform:translateX(20px)}
 .clist{margin-top:8px}
+/* ===== tabs ===== */
+.tabs{position:sticky;top:8px;z-index:5;display:flex;gap:4px;padding:5px;margin:0 0 14px;background:var(--card);
+  backdrop-filter:var(--card-blur);-webkit-backdrop-filter:var(--card-blur);border:1px solid var(--line);border-radius:14px;overflow-x:auto;scrollbar-width:none}
+.tabs::-webkit-scrollbar{display:none}
+.tabs button{flex:1 0 auto;background:transparent;color:var(--muted);padding:9px 12px;border-radius:10px;font-size:13px;
+  white-space:nowrap;font-weight:600;transition:background .15s,color .15s}
+.tabs button:hover{color:var(--text)}
+.tabs button.on{background:color-mix(in srgb,var(--accent) 16%,transparent);color:var(--text);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--accent) 60%,transparent)}
+section.tab{display:none}
+section.tab.on{display:block;animation:tabin .18s ease-out}
+body.alltabs section.tab{display:block}
+@keyframes tabin{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+.storechips{display:flex;gap:6px;flex-wrap:wrap;margin-top:14px}
+.storechips:empty{display:none}
+.schip{display:inline-flex;align-items:center;gap:7px;font-size:12px;padding:6px 11px;border-radius:999px;border:1px solid var(--line);
+  background:transparent;color:var(--text);font-weight:500;cursor:pointer}
+.schip i{width:8px;height:8px;border-radius:50%;background:var(--muted);flex:none}
+.schip.on i{background:var(--go)}.schip.checking i{background:var(--accent);animation:pulse 1.4s infinite}
+.schip.error i{background:var(--stop)}.schip.paused i,.schip.waiting i{background:var(--found)}
+.schip.off{color:var(--muted)}
+.swgrid{display:grid;gap:2px}
+.swrow{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0;padding:10px 2px;color:var(--text);font-size:15px;
+  border-top:1px solid var(--line);cursor:pointer}
+.swrow:first-child{border-top:0}
+summary.cardtitle{margin:0;font-size:16px}
+@media (max-width:480px){.tabs{gap:2px;padding:4px}.tabs button{padding:8px 8px;font-size:12px}}
 .crow{display:block;padding:9px 0;border-top:1px solid var(--line);text-decoration:none;color:var(--text);cursor:pointer}
 .crow:first-child{border-top:0}
 .crow:hover .cname{color:var(--accent)}
@@ -3592,45 +3618,17 @@ try{document.documentElement.dataset.theme=localStorage.getItem("qw-theme")||"ne
     <button class="start" style="background:var(--found);color:#1b1d22" onclick="act('ack')">I'm on it (stop the reminders)</button>
   </div>
   <div class="warn" id="jsWarn"></div>
+  <div class="storechips" id="storeChips"></div>
 </div>
 
-<!-- ===== Computer health ===== -->
-<div class="card" id="healthCard">
-  <div class="cardhead"><span class="cardtitle" style="margin:0">Computer health</span>
-    <span class="sub" id="hcChecked"></span></div>
-  <div class="hgrid">
-    <div class="htile"><small>Temperature</small><b id="hcTemp">–</b></div>
-    <div class="htile"><small>Processor</small><b id="hcCpu">–</b></div>
-    <div class="htile"><small>Memory free</small><b id="hcMem">–</b></div>
-    <div class="htile"><small>Stuck Chrome closed</small><b id="hcClean">0</b></div>
-  </div>
-  <div class="sub" id="hcStatus" style="margin-top:8px"></div>
-  <label style="margin-top:12px">Safety</label>
-  <div class="seg" id="hcMode">
-    <button data-m="protect">Protect</button><button data-m="warn">Warn only</button><button data-m="off">Off</button>
-  </div>
-  <div class="sub" id="hcModeHelp"></div>
-</div>
-
-<!-- ===== Releases & drops ===== -->
-<div class="card" id="newsCard">
-  <div class="cardhead">
-    <span class="cardtitle" style="margin:0">Releases &amp; drops</span>
-    <button class="plain small" id="newsBtn" onclick="refreshNews()">Refresh</button>
-  </div>
-  <div class="sub" id="newsUpdated">Loading...</div>
-  <div class="chips" id="newsChips">
-    <button data-c="all" class="sel">All</button>
-    <button data-c="confirmed">Confirmed</button>
-    <button data-c="predicted">Predicted</button>
-    <button data-c="pkc">Pok&eacute;mon Center</button>
-    <button data-c="store">In stores</button>
-  </div>
-  <div id="newsList"></div>
-  <button class="plain small" id="newsMore" style="display:none;margin-top:8px" onclick="newsLimit+=10;renderNews()">Show more</button>
-  <div class="sub" id="newsErr"></div>
-</div>
-
+<nav class="tabs" id="tabs">
+  <button data-go="pkc">Pok&eacute;mon Center</button>
+  <button data-go="stores">Stores</button>
+  <button data-go="alerts">Alerts</button>
+  <button data-go="drops">Releases</button>
+  <button data-go="system">System</button>
+</nav>
+<section class="tab" data-tab="pkc">
 <!-- ===== 2. When to watch ===== -->
 <div class="card">
   <div class="cardtitle">When to watch</div>
@@ -3698,6 +3696,35 @@ try{document.documentElement.dataset.theme=localStorage.getItem("qw-theme")||"ne
   </details>
 </div>
 
+<div class="card">
+  <details class="inner flush" id="settingsBox"><summary>Watch settings</summary>
+    <div class="row">
+      <div><label>Refresh every (min sec)</label><input id="min_wait" type="number" min="15"></div>
+      <div><label>to (max sec)</label><input id="max_wait" type="number" min="15"></div>
+    </div>
+    <label class="check"><input type="checkbox" id="pkc_background"> Keep the Pok&eacute;mon Center window minimized while watching. It pops up with your spot when a queue hits.</label>
+    <label>Queue words: any of these on the page = queue (comma separated)</label><input id="queue_words">
+    <label>Block words: any of these = blocked/error page, so it pauses and pings you</label><input id="block_words">
+    <label>Heads-up words: site is down/overloaded, so it pings once and keeps watching</label><input id="headsup_words">
+    <label class="check"><input id="use_script_check" type="checkbox">
+      Also detect the queue by its waiting-room script (turn off if you get false alarms)</label>
+    <label>Signed-in words: any of these = you're signed in</label><input id="signed_in_words">
+    <label>Signed-out words: any of these (and no signed-in words) = you're signed out</label><input id="signed_out_words">
+    <div class="btns"><button class="plain" onclick="save()">Save</button><span class="saved" id="saved"></span></div>
+  </details>
+</div>
+</section>
+
+<section class="tab" data-tab="stores">
+<div class="card storebar">
+  <div class="cardtitle">Store checkers</div>
+  <div class="sub" style="margin:-6px 0 10px">Each one runs on its own, in the background. Turn on only the ones this computer should handle, so Discord doesn't get the same alert twice.</div>
+  <div class="swgrid">
+    <label class="swrow"><span>Target restocks</span><span class="switch"><input type="checkbox" data-mirror="target_enabled"><span></span></span></label>
+    <label class="swrow"><span>Best Buy restocks &amp; invites</span><span class="switch"><input type="checkbox" data-mirror="bestbuy_enabled"><span></span></span></label>
+    <label class="swrow"><span>Walmart drawings</span><span class="switch"><input type="checkbox" data-mirror="walmart_enabled"><span></span></span></label>
+  </div>
+</div>
 <!-- ===== Target restocks ===== -->
 <div class="card" id="targetCard">
   <div class="cardhead">
@@ -3789,12 +3816,21 @@ try{document.documentElement.dataset.theme=localStorage.getItem("qw-theme")||"ne
   </details>
 </div>
 
-<!-- ===== 4. Alerts ===== -->
 <div class="card">
-  <div class="cardtitle">Alerts</div>
+  <details class="inner flush"><summary>Price limits (MSRP) &amp; how stores are read</summary>
+    <label>Alert up to this many dollars over retail ($). Cheap items get less: never more than 25% over.</label><input id="msrp_allowance" type="number" min="0" step="1">
+    <label>Retail prices: <code>Product | price</code>, one per line. The most specific line goes first (the first match wins). Bundles count each item, so a 2-pack is 2x. Used by Target, Best Buy and Walmart.</label>
+    <textarea id="msrp_limits" rows="8" spellcheck="false"></textarea>
+    <label class="check"><input type="checkbox" id="checker_invisible"> Read store pages invisibly (no windows or tabs). Recommended.</label>
+    <div class="btns"><button class="plain" onclick="save()">Save</button></div>
+  </details>
+</div>
+</section>
 
-  <details class="inner" id="phoneBox">
-    <summary>Phone (ntfy app)</summary>
+<section class="tab" data-tab="alerts">
+<div class="card">
+  <details class="inner flush" id="phoneBox" open>
+    <summary class="cardtitle">Phone (ntfy app)</summary>
     <ol>
       <li>Get the free <b>ntfy</b> app on your phone.</li>
       <li>Tap <b>+</b> and subscribe to: <span class="topic" id="topicShow"></span></li>
@@ -3808,14 +3844,17 @@ try{document.documentElement.dataset.theme=localStorage.getItem("qw-theme")||"ne
     <div class="sub" id="phoneLinks"></div>
     <div class="btns"><button class="plain" onclick="sendControls()">Send the buttons to my phone</button>
       <span class="saved" id="phoneMsg"></span></div>
+    <label>Your ntfy topic (your phone must subscribe to this exact name)</label><input id="ntfy_topic">
+    <div class="btns"><button class="plain" onclick="save()">Save</button></div>
   </details>
-
-  <details class="inner" id="discordBox">
-    <summary>Discord</summary>
+</div>
+<div class="card">
+  <details class="inner flush" id="discordBox" open>
+    <summary class="cardtitle">Discord</summary>
     <label class="check"><input id="discord_enabled" type="checkbox"> Send alerts to Discord</label>
     <label>Pok&eacute;mon Center queue channel webhook (channel settings &rarr; Integrations &rarr; Webhooks)</label>
     <input id="discord_webhook" placeholder="https://discord.com/api/webhooks/...">
-    <div class="sub">Pok&eacute;mon Center queue alerts post here. Target and Walmart post here too if you leave their boxes blank.</div>
+    <div class="sub">Pok&eacute;mon Center queue alerts post here. Target, Best Buy and Walmart post here too if you leave their boxes blank.</div>
     <label>Target restocks channel webhook (optional)</label>
     <input id="discord_webhook_target" placeholder="Blank = same as above">
     <label>Target role ID to @ (blank = same as the queue alert)</label>
@@ -3861,6 +3900,53 @@ try{document.documentElement.dataset.theme=localStorage.getItem("qw-theme")||"ne
     <div class="sub" id="discordMsg"></div>
   </details>
 </div>
+</section>
+
+<section class="tab" data-tab="drops">
+<!-- ===== Releases & drops ===== -->
+<div class="card" id="newsCard">
+  <div class="cardhead">
+    <span class="cardtitle" style="margin:0">Releases &amp; drops</span>
+    <button class="plain small" id="newsBtn" onclick="refreshNews()">Refresh</button>
+  </div>
+  <div class="sub" id="newsUpdated">Loading...</div>
+  <div class="chips" id="newsChips">
+    <button data-c="all" class="sel">All</button>
+    <button data-c="confirmed">Confirmed</button>
+    <button data-c="predicted">Predicted</button>
+    <button data-c="pkc">Pok&eacute;mon Center</button>
+    <button data-c="store">In stores</button>
+  </div>
+  <div id="newsList"></div>
+  <button class="plain small" id="newsMore" style="display:none;margin-top:8px" onclick="newsLimit+=10;renderNews()">Show more</button>
+  <div class="sub" id="newsErr"></div>
+  <details class="inner"><summary>Sources</summary>
+    <label>One per line, <code>Name | link</code>. A news feed (RSS/Atom) or a release-calendar web page both work.</label>
+    <textarea id="news_feeds" rows="4" spellcheck="false"></textarea>
+    <div class="btns"><button class="plain" onclick="save()">Save</button></div>
+  </details>
+</div>
+
+</section>
+
+<section class="tab" data-tab="system">
+<!-- ===== Computer health ===== -->
+<div class="card" id="healthCard">
+  <div class="cardhead"><span class="cardtitle" style="margin:0">Computer health</span>
+    <span class="sub" id="hcChecked"></span></div>
+  <div class="hgrid">
+    <div class="htile"><small>Temperature</small><b id="hcTemp">–</b></div>
+    <div class="htile"><small>Processor</small><b id="hcCpu">–</b></div>
+    <div class="htile"><small>Memory free</small><b id="hcMem">–</b></div>
+    <div class="htile"><small>Stuck Chrome closed</small><b id="hcClean">0</b></div>
+  </div>
+  <div class="sub" id="hcStatus" style="margin-top:8px"></div>
+  <label style="margin-top:12px">Safety</label>
+  <div class="seg" id="hcMode">
+    <button data-m="protect">Protect</button><button data-m="warn">Warn only</button><button data-m="off">Off</button>
+  </div>
+  <div class="sub" id="hcModeHelp"></div>
+</div>
 
 <!-- ===== 5. Look ===== -->
 <div class="card">
@@ -3894,32 +3980,6 @@ try{document.documentElement.dataset.theme=localStorage.getItem("qw-theme")||"ne
   </details>
 </div>
 
-<!-- ===== 6. Advanced ===== -->
-<div class="card">
-  <details class="inner flush" id="settingsBox"><summary>Advanced</summary>
-    <div class="row">
-      <div><label>Refresh every (min sec)</label><input id="min_wait" type="number" min="15"></div>
-      <div><label>to (max sec)</label><input id="max_wait" type="number" min="15"></div>
-    </div>
-    <label>Queue words: any of these on the page = queue (comma separated)</label><input id="queue_words">
-    <label>Block words: any of these = blocked/error page, so it pauses and pings you</label><input id="block_words">
-    <label>Heads-up words: site is down/overloaded, so it pings once and keeps watching</label><input id="headsup_words">
-    <label class="check"><input id="use_script_check" type="checkbox">
-      Also detect the queue by its waiting-room script (turn off if you get false alarms)</label>
-    <label>Signed-in words: any of these = you're signed in</label><input id="signed_in_words">
-    <label>Signed-out words: any of these (and no signed-in words) = you're signed out</label><input id="signed_out_words">
-    <label class="check"><input type="checkbox" id="pkc_background"> Keep the Pok&eacute;mon Center window minimized while watching. It pops up with your spot when a queue hits.</label>
-    <label class="check"><input type="checkbox" id="checker_invisible"> Read Target &amp; Walmart pages invisibly (no windows or tabs). Recommended.</label>
-    <label>Alert up to this many dollars over retail ($). Cheap items get less: never more than 25% over.</label><input id="msrp_allowance" type="number" min="0" step="1">
-    <label>Retail prices (Target's own prices): <code>Product | price</code>, one per line. The most specific line goes first (the first match wins). Bundles count each item, so a 2-pack is 2x.</label>
-    <textarea id="msrp_limits" rows="8" spellcheck="false"></textarea>
-    <label>ntfy topic (your phone must subscribe to the same name)</label><input id="ntfy_topic">
-    <label>Releases &amp; drops sources: one per line, <code>Name | link</code>. A news feed (RSS/Atom) or a release-calendar web page both work.</label>
-    <textarea id="news_feeds" rows="4" spellcheck="false"></textarea>
-    <div class="btns"><button class="plain" onclick="save()">Save</button><span class="saved" id="saved"></span></div>
-  </details>
-</div>
-
 <!-- ===== 7. Log ===== -->
 <div class="card">
   <details class="inner flush"><summary>Activity log</summary><div class="log" id="log"></div></details>
@@ -3927,6 +3987,7 @@ try{document.documentElement.dataset.theme=localStorage.getItem("qw-theme")||"ne
   <button class="plain" id="quitBtn" onclick="quitApp()">Quit Guardian Monitor</button></div>
   <div class="sub" id="updMsg"></div>
 </div>
+</section>
 </div>
 <script>
 const TOKEN="__TOKEN__";
@@ -4513,6 +4574,7 @@ function checkerRow(i,isDraw){
 }
 function renderCheckers(cs){
   if(!cs)return;
+  renderStoreChips(cs);
   for(const k of ["target","walmart","bestbuy"]){
     const c=cs[k];if(!c)continue;
     let t=c.message||"";
@@ -4534,6 +4596,36 @@ async function targetTest(){
   await save();
   const el=document.getElementById("targetTestMsg");el.textContent="Sending...";
   const r=await api("/target_test",{});el.textContent=r.msg;setTimeout(()=>el.textContent="",6000);
+}
+const TABS=["pkc","stores","alerts","drops","system"];
+function showTab(t){
+  if(!TABS.includes(t))t="pkc";
+  document.querySelectorAll("section.tab").forEach(x=>x.classList.toggle("on",x.dataset.tab===t));
+  document.querySelectorAll("#tabs button").forEach(b=>b.classList.toggle("on",b.dataset.go===t));
+  try{localStorage.setItem("gmTab",t);}catch(e){}
+}
+document.querySelectorAll("#tabs button").forEach(b=>b.onclick=()=>{showTab(b.dataset.go);window.scrollTo({top:0,behavior:"smooth"});});
+if(/[?&]all=1/.test(location.search))document.body.classList.add("alltabs");
+{let t="pkc";try{t=localStorage.getItem("gmTab")||"pkc";}catch(e){}showTab(t);}
+// the Store checkers card mirrors each store's own switch
+document.querySelectorAll("[data-mirror]").forEach(m=>{
+  const src=document.getElementById(m.dataset.mirror);
+  m.onchange=()=>{src.checked=m.checked;save();};
+});
+function syncMirrors(){document.querySelectorAll("[data-mirror]").forEach(m=>{m.checked=document.getElementById(m.dataset.mirror).checked;});}
+const STORE_NAMES={target:"Target",bestbuy:"Best Buy",walmart:"Walmart"};
+const STATE_WORD={on:"on",checking:"checking",error:"problem",paused:"paused",waiting:"waiting",off:"off"};
+function renderStoreChips(cs){
+  const box=document.getElementById("storeChips");if(!cs){return;}
+  box.innerHTML="";
+  for(const k of ["target","bestbuy","walmart"]){
+    const c=cs[k];if(!c)continue;
+    const b=document.createElement("button");b.className="schip "+(c.status||"off");
+    const i=document.createElement("i");b.append(i,document.createTextNode(STORE_NAMES[k]+" · "+(STATE_WORD[c.status]||c.status)));
+    b.title=c.message||"";b.onclick=()=>{showTab("stores");document.getElementById(k+"Card").scrollIntoView({behavior:"smooth",block:"start"});};
+    box.append(b);
+  }
+  syncMirrors();
 }
 async function checkNow(k){document.getElementById(k+"Now").disabled=true;await api("/checker_now",{which:k});setTimeout(refresh,600);}
 refresh();setInterval(refresh,2000);

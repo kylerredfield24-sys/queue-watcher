@@ -1,22 +1,22 @@
 {
-  "version": "4.3",
-  "notes": "4.3: Best Buy shows in your phone Status. One-time TEST post in #best-buy after Best Buy's first real check. Discord posts all say Guardian Monitor.",
+  "version": "4.4",
+  "notes": "4.4: cleaner app layout with tabs (Pok\u00e9mon Center, Stores, Alerts, Releases, System). Store chips on the status card and on/off switches for Target, Best Buy and Walmart in one place. Your settings stay the same.",
   "files": {
     "mac": {
-      "Resources/watcher_app.py": "52401c343e466f36899acf0e24d609f4febcfb4a2f88f44505696d85ea037b05",
+      "Resources/watcher_app.py": "b8df10d5525b839b2565b827cf5b9135ece13ccdb28dee12c8b824b9d2aaab19",
       "Resources/panel.js": "1ca5a1d6d0fd91e7526c6be3c75955b16928013fb0243bde1f4cdd37b7fa6e40",
-      "Resources/app_version": "ba639ab79c7470c675fc78c9f702bcafe048f44ef03468b12f81f05393d1803b",
+      "Resources/app_version": "bc33529cc1b1e6924eb04c472ecaab73efc2d71a0bbf442c550ecdb4b1b5db94",
       "Resources/panel_version": "022804d19c8fe566dc00dca4721c1eadf6ed71164d647a2e77493ac87c4fe3a6",
       "Resources/AppIcon.icns": "6b37b4479b291aba49e8a189be4dfdfef8727216e8a1fd48b2ff0b22956bdb5c",
       "Resources/guardian_avatar.png": "f1f0d53666d79a1c9e0d788861d6fa47e09b3d4f5fc6bcd2eb388990563c7ad6",
       "MacOS/QueueWatcher": "8278214b1cf0317480d859208b60e2848ac6bc6b14c1ba344f656b9d1cfb8c48",
-      "Info.plist": "3d9e6a3ad4b392523b66b9cfa8d739ba4c4754030c2384a1b3f69ec642e3de84"
+      "Info.plist": "e38377b49f98542cf7feb1d9779192dd8a2300ff856bdbc02b50281436683561"
     },
     "windows": {
-      "watcher_app.py": "39eed4c17053764217b0d62d51bf6c5d5efd990dbbbd35b2769814d1454c8dad",
+      "watcher_app.py": "a868b272f8433b9653b583909ede38981301a8025a623330fb665cb22fb24b9b",
       "winplat.py": "9a44879168a95d934a5f1325dc5ee6aa5fccaf180411523f30bee7455bdeb44a",
       "launcher.pyw": "8e8fc021d3aaad76e3cc9a864e401095882c5f7ceedee8bd185d4200af4f4039",
-      "app_version": "ba639ab79c7470c675fc78c9f702bcafe048f44ef03468b12f81f05393d1803b",
+      "app_version": "bc33529cc1b1e6924eb04c472ecaab73efc2d71a0bbf442c550ecdb4b1b5db94",
       "QueueWatcher.ico": "e7595b3aaedf2f63af463c789f9867448880ce238fc94752a746204b15954557",
       "guardian_avatar.png": "f1f0d53666d79a1c9e0d788861d6fa47e09b3d4f5fc6bcd2eb388990563c7ad6"
     }
