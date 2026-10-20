@@ -23,7 +23,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs
 
 PORT = 8765
-VERSION = "4.2"   # the launcher compares this, and replaces an older copy that's still running
+VERSION = "4.3"   # the launcher compares this, and replaces an older copy that's still running
 PLATFORM = "mac"  # the Windows version switches this to "windows"
 TOKEN = secrets.token_hex(16)
 PAGE_LOAD_WAIT = 8
@@ -48,6 +48,7 @@ DEFAULTS = {
     "discord_role_bestbuy": "",      # role ID to ping for Best Buy restocks (blank = same as queue alerts)
     "roles_v1": False,
     "roles_v2": False,
+    "brand_v2": False,
     "update_pinged": "",             # newest version your phone was already told about
     "discord_user_id": "",          # user ID or role ID, used with "user"/"role" below
     "discord_mention": "user",       # none | here | everyone | role | user
@@ -96,6 +97,7 @@ DEFAULTS = {
     "bestbuy_mention": "same",         # same | none | here | everyone
     "discord_bestbuy_msg": "\U0001F7E6 **Best Buy restock:** {item} for {price}\n{link}",
     "bestbuy_v1": False,
+    "bestbuy_test_done": False,      # the one-time "Best Buy checker works" test post
     "msrp_limits": "",
     "msrp_allowance": 10,
     # Releases & drops news: one source per line, "Name | feed link"
@@ -268,6 +270,7 @@ def clean_settings(new):
             links.append(u)
     s["bestbuy_watch"] = "\n".join(links[:10])
     s["bestbuy_v1"] = s.get("bestbuy_v1") in (True, "true", 1, "1")
+    s["bestbuy_test_done"] = s.get("bestbuy_test_done") in (True, "true", 1, "1")
     s["msrp_limits"] = str(s["msrp_limits"]).strip()[:3000] or MSRP_DEFAULT
     s["pkc_background"] = s.get("pkc_background", True) in (True, "true", "on", 1, "1")
     s["brand_v1"] = s.get("brand_v1") in (True, "true", 1, "1")
@@ -295,6 +298,7 @@ def clean_settings(new):
         s[key] = "".join(c for c in str(s.get(key, "")) if c.isdigit())[:25]
     s["roles_v1"] = s.get("roles_v1") in (True, "true", 1, "1")
     s["roles_v2"] = s.get("roles_v2") in (True, "true", 1, "1")
+    s["brand_v2"] = s.get("brand_v2") in (True, "true", 1, "1")
     s["update_pinged"] = str(s.get("update_pinged", ""))[:20]
     for key in ("discord_webhook", "discord_webhook_target", "discord_webhook_walmart", "discord_webhook_bestbuy"):
         u = str(s.get(key, "")).strip()
@@ -2929,6 +2933,29 @@ def money_str(v):
     return f"${v:.2f}" if v is not None else ""
 
 
+def bestbuy_first_test(s):
+    """Once, right after Best Buy's first real check with its own channel: post a TEST in that channel
+    showing what the check found, so you know it works. Never @'s anyone."""
+    with settings_lock:
+        fresh = load_settings()
+        if fresh["bestbuy_test_done"] or not fresh["discord_webhook_bestbuy"]:
+            return False
+        fresh["bestbuy_test_done"] = True
+        save_settings(fresh)
+    c = checkers["bestbuy"]
+    sample = next((i for i in c["items"] if i.get("price") is not None), None)
+    lines = [f"\U0001F9EA **TEST:** the Best Buy checker is working (this is a one-time test, not a restock).",
+             f"Just checked Best Buy: {c.get('message') or 'done'}."]
+    if sample:
+        lines.append(f"Example it read: {sample['name']} at {money_str(sample.get('price'))} <{sample['url']}>")
+    lines.append(f"Real restocks and invite drawings will post here and @ the Best Buy role. "
+                 f"It checks every {fresh['bestbuy_every']} minutes.")
+    send_all(fresh, "TEST: Best Buy checker works", "Best Buy checked fine. A one-time TEST was posted in your "
+             "Best Buy Discord channel.", "\n".join(lines), discord_mention_on=False, channel="bestbuy")
+    log("Best Buy works: posted a one-time TEST in its Discord channel.")
+    return True
+
+
 def send_bestbuy_test(s):
     """Send a sample Best Buy alert to your phone and Discord. Never @'s anyone, opens nothing."""
     sample = next((i for i in checkers["bestbuy"]["items"] if i.get("price") is not None), None) or \
@@ -3144,6 +3171,8 @@ def checker_loop(name):
                 try:
                     run(s)
                     c["status"] = "on"
+                    if name == "bestbuy":
+                        bestbuy_first_test(s)
                     c["block_pinged"] = False
                     c["last_result"], c["last_done"] = c["message"], time.time()
                 except Blocked:
@@ -4812,6 +4841,11 @@ def apply_roles():
     """Once: ping the server's alert roles (Pokémon Center / Target Restocks / Walmart Raffles / Best Buy)."""
     with settings_lock:
         s = load_settings()
+        if not s["brand_v2"]:                   # every Discord post says "Guardian Monitor" (once; you can change it after)
+            if s["discord_name"] != BRAND:
+                log(f'Discord bot name changed from "{s["discord_name"] or "(webhook default)"}" to "{BRAND}".')
+            s["discord_name"], s["brand_v2"] = BRAND, True
+            save_settings(s)
         if not s["discord_role_bestbuy"] and not s.get("roles_v2"):
             s["discord_role_bestbuy"], s["roles_v2"] = ROLE_IDS["bestbuy"], True
             save_settings(s)
@@ -4903,6 +4937,8 @@ def status_text():
     for name, c in checkers.items():
         label = SITE_NAMES.get(name, name.title())
         if c["status"] == "off":
+            if name == "bestbuy":
+                lines.append(f"{CHECKER_ICON['off']} {label}: off on this computer")
             continue
         msg = (c.get("message") or c["status"]).replace("Problem: ", "")
         msg = msg.split(". It'll")[0]
