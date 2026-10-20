@@ -23,7 +23,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs
 
 PORT = 8765
-VERSION = "4.5"   # the launcher compares this, and replaces an older copy that's still running
+VERSION = "4.6"   # the launcher compares this, and replaces an older copy that's still running
 PLATFORM = "mac"  # the Windows version switches this to "windows"
 TOKEN = secrets.token_hex(16)
 PAGE_LOAD_WAIT = 8
@@ -93,6 +93,12 @@ DEFAULTS = {
     "walmart_enabled": False,
     "walmart_every": 20,
     "walmart_msrp_only": True,
+    "walmart_products": True,        # also check Walmart's Pokémon card products for MSRP restocks
+    "walmart_scan": True,
+    "walmart_watch": "",
+    "walmart_open_page": True,
+    "walmart_mention": "same",
+    "discord_walmart_msg": "\U0001F6D2 **Walmart restock:** {item} for {price}\n{link}",
     # Best Buy restocks (works like Target)
     "bestbuy_enabled": False,
     "bestbuy_watch": "",
@@ -112,7 +118,10 @@ DEFAULTS = {
     "amazon_mention": "same",
     "discord_amazon_msg": "\U0001F4E6 **Amazon restock:** {item} for {price}\n{link}",
     "amazon_test_done": False,
-    "msrp_limits": "",
+    "msrp_limits": "",               # Target's own prices
+    "msrp_bestbuy": "",
+    "msrp_amazon": "",
+    "msrp_walmart": "",
     "msrp_allowance": 10,
     # Releases & drops news: one source per line, "Name | feed link"
     "news_feeds": "Bill's Archive (release calendar) | https://billsarchive.com/calendar.html\n"
@@ -249,7 +258,8 @@ def clean_settings(new):
     s["discord_enabled"] = s["discord_enabled"] in (True, "true", "on", 1, "1")
     for key in ("target_enabled", "target_scan", "target_open_page", "walmart_enabled", "walmart_msrp_only",
                 "checker_invisible", "bestbuy_enabled", "bestbuy_scan", "bestbuy_open_page",
-                "amazon_enabled", "amazon_scan", "amazon_open_page", "amazon_test_done"):
+                "amazon_enabled", "amazon_scan", "amazon_open_page", "amazon_test_done",
+                "walmart_products", "walmart_scan", "walmart_open_page"):
         s[key] = s[key] in (True, "true", "on", 1, "1")
     try:
         s["msrp_allowance"] = round(min(100.0, max(0.0, float(str(s["msrp_allowance"]).lstrip("$")))), 2)
@@ -295,9 +305,22 @@ def clean_settings(new):
         if _re.match(r"https?://(www\.)?amazon\.com/", u) and u not in links:
             links.append(u)
     s["amazon_watch"] = "\n".join(links[:10])
+    if s.get("walmart_mention") not in ("same", "none", "here", "everyone"):
+        s["walmart_mention"] = "same"
+    s["discord_walmart_msg"] = str(s.get("discord_walmart_msg", "")).strip()[:1800] or DEFAULTS["discord_walmart_msg"]
+    links = []
+    for u in str(s.get("walmart_watch", "")).split():
+        u = u.strip()
+        if u.startswith(("walmart.com", "www.walmart.com")):
+            u = "https://" + u
+        if _re.match(r"https?://(www\.)?walmart\.com/ip/", u) and u not in links:
+            links.append(u)
+    s["walmart_watch"] = "\n".join(links[:10])
     s["bestbuy_v1"] = s.get("bestbuy_v1") in (True, "true", 1, "1")
     s["bestbuy_test_done"] = s.get("bestbuy_test_done") in (True, "true", 1, "1")
     s["msrp_limits"] = str(s["msrp_limits"]).strip()[:3000] or MSRP_DEFAULT
+    for st in MSRP_STORES:
+        s[f"msrp_{st}"] = str(s.get(f"msrp_{st}", "")).strip()[:3000] or MSRP_GENERAL
     s["pkc_background"] = s.get("pkc_background", True) in (True, "true", "on", 1, "1")
     s["brand_v1"] = s.get("brand_v1") in (True, "true", 1, "1")
     if s.get("health_mode") not in ("protect", "warn", "off"):
@@ -2378,11 +2401,15 @@ WALMART_DRAW = "https://www.walmart.com/shop/collectibles/draw"
 BESTBUY_SEARCH = "https://www.bestbuy.com/site/searchpage.jsp?st=pokemon+trading+card+game"
 # Amazon search filtered to items sold by Amazon itself (p_6:ATVPDKIKX0DER = seller "Amazon.com").
 AMAZON_SEARCH = "https://www.amazon.com/s?k=pokemon+trading+card+game&rh=p_6%3AATVPDKIKX0DER"
+# Walmart search filtered to items sold by Walmart itself (not Marketplace sellers).
+WALMART_SEARCH = "https://www.walmart.com/search?q=pokemon+trading+card+game&facet=retailer_type%3AWalmart"
 SITE_NAMES = {"target": "Target", "walmart": "Walmart", "bestbuy": "Best Buy", "amazon": "Amazon"}
 WALMART_SEEN_FILE = os.path.join(DATA_DIR, "walmart_seen.json")
 CHECK_GAP = (5, 10)             # seconds between page loads inside one check (gentle on the site)
 BLOCK_PAUSE = 30 * 60           # if a site shows a robot check, back off this long
 CHECKER_BLOCK = _re.compile(r"robot or human|press (?:&|and) hold|verify (?:that )?(?:you are|you're) (?:a )?human|"
+                            r"enter the characters you see|make sure you'?re not a robot|to discuss automated access|"
+                            r"click the button below to continue shopping|"
                             r"access denied|unusual (?:activity|traffic)|are you a robot|pardon our interruption|"
                             r"request unsuccessful", _re.I)
 POKEMON = _re.compile(r"pok[eé]mon", _re.I)
@@ -2413,6 +2440,21 @@ MSRP_DEFAULT = "\n".join([
     "Collector Chest | 34.99", "Mini Tin Display | 129.90", "Mini Tin | 12.99", "Tin | 29.99",
     "ex Box | 29.99", "2 Pack Blister | 12.99", "Checklane Blister | 6.99", "Blister | 14.99",
     "Sleeved Booster | 5.99", "Booster Pack | 5.99", "Collection | 29.99", "Box | 29.99"])
+# Official MSRPs (Pokémon's suggested prices, Oct 2026) for Best Buy, Amazon and Walmart, which mostly sell
+# at MSRP. Most specific first. Each store has its own list you can edit (Stores tab → Price limits).
+MSRP_GENERAL = "\n".join([
+    "30th Celebration Ultra Premium Collection | 179.99", "Ultra Premium Collection | 179.99",
+    "Super Premium Collection | 89.99", "Pokemon Center Elite Trainer Box | 59.99", "Elite Trainer Box | 49.99",
+    "Booster Bundle | 26.94", "Booster Box | 161.64", "Premium Figure Collection | 69.99",
+    "Premium Poster Collection | 39.99", "Binder Collection | 31.99", "Figure Collection | 29.99",
+    "Special Collection | 29.99", "Illustration Collection | 17.99", "Poster Collection | 14.99",
+    "Sticker Collection | 14.99", "Knock Out Collection | 9.99", "Premium Collection | 39.99",
+    "Build & Battle | 29.99", "Battle Deck | 19.99", "Collector Chest | 29.99", "Mini Tin Display | 99.90",
+    "Mini Tin | 9.99", "ex Box | 21.99", "Tin | 24.99", "3 Pack Blister | 14.99", "2 Pack Blister | 9.99",
+    "Checklane Blister | 5.99", "Blister | 14.99", "Sleeved Booster | 4.99", "Booster Pack | 4.99",
+    "Collection | 29.99", "Box | 29.99"])
+MSRP_STORES = ("bestbuy", "amazon", "walmart")
+ROUNDING = 0.49      # a small cushion on every limit, so a few cents of rounding never blocks an alert
 # Earlier defaults, upgraded automatically if you never edited them.
 OLD_MSRP_DEFAULTS = ["\n".join([
     "30th Celebration Ultra Premium Collection | 249.99",
@@ -2460,7 +2502,7 @@ READ_JS = (
     "var bs=document.querySelectorAll('button,[role=button],input[type=submit]');"
     "for(var j=0;j<bs.length&&o.buttons.length<80;j++){var b=bs[j];var t=(b.innerText||b.value||'').trim();"
     "if(t&&t.length<50)o.buttons.push({t:t,d:!!(b.disabled||b.getAttribute('aria-disabled')==='true')});}"
-    "var sel='a[href*=\"/-/A-\"],a[href*=\"/ip/\"],a[href*=\"skuId=\"],a[href*=\"bestbuy.com/product/\"],a[href*=\"/dp/\"]';"
+    "var sel='a[href*=\"/-/A-\"],a[href*=\"/ip/\"],a[href*=\"skuId=\"],a[href*=\"/product/\"],a[href*=\"/dp/\"]';"
     "var key=function(h){var m=h.match(/\\/-\\/A-(\\d+)|\\/ip\\/(?:[^\\/]+\\/)?(\\d+)|skuId=(\\d+)|\\/dp\\/([A-Z0-9]{10})/);return m?(m[1]||m[2]||m[3]||m[4]):h.split('?')[0];};"
     "var seen={},as=document.querySelectorAll(sel);"
     "for(var k=0;k<as.length&&o.cards.length<60;k++){var a=as[k];var id=key(a.href);if(seen[id])continue;"
@@ -2537,13 +2579,19 @@ def bundle_count(name):
     return 1
 
 
-def msrp_limit(name, s):
-    """Your max price for this product (per-item limit x how many are in the bundle)."""
+def msrp_table(s, store="target"):
+    if store in MSRP_STORES:
+        return s.get(f"msrp_{store}") or MSRP_GENERAL
+    return s["msrp_limits"]
+
+
+def msrp_limit(name, s, store="target"):
+    """That store's max price for this product (per-item limit x how many are in the bundle)."""
     low = _re.sub(r"[\-\u2010-\u2015/]+", " ", normalize(name))      # "Ultra-Premium" = "Ultra Premium"
     for rx, rep_ in ALIASES:
         low = _re.sub(rx, rep_, low)
     fallback = None
-    for key, val in parse_msrp(s["msrp_limits"]):
+    for key, val in parse_msrp(msrp_table(s, store)):
         if key in ("anything else", "everything else", "other"):
             fallback = val
             continue
@@ -2573,8 +2621,8 @@ def allowance_for(limit, s):
     return min(s["msrp_allowance"], round(limit * 0.25, 2))
 
 
-def judge(item, s):
-    item["limit"] = msrp_limit(item["name"], s)
+def judge(item, s, store="target"):
+    item["limit"] = msrp_limit(item["name"], s, store)
     if not item.get("in_stock"):
         item["status"] = "out"
     elif item.get("third_party"):
@@ -2583,7 +2631,7 @@ def judge(item, s):
         item["status"] = "notretail"
     elif item["limit"] is None:
         item["status"] = "nolimit"
-    elif item.get("price") is not None and item["price"] > item["limit"] + allowance_for(item["limit"], s) + 0.005:
+    elif item.get("price") is not None and item["price"] > item["limit"] + allowance_for(item["limit"], s) + ROUNDING:
         item["status"] = "over"
     else:
         item["status"] = "in"
@@ -2630,7 +2678,7 @@ def parse_target_product(d, url, s):
 
 BB_SOLD_OUT = _re.compile(r"\bsold out\b|coming soon|unavailable nearby|no longer available|not available|"
                           r"get notified|notify me", _re.I)
-BB_BUY = _re.compile(r"add to cart|please wait|pre-?order", _re.I)
+BB_BUY = _re.compile(r"add to cart|buy now|please wait|pre-?order", _re.I)
 BB_OTHER = _re.compile(r"\n(?:customers also (?:viewed|bought)|similar products|compare similar products|"
                       r"frequently bought together|people also (?:viewed|bought)|recently viewed|"
                       r"customers who viewed this)\b", _re.I)
@@ -2680,7 +2728,7 @@ def parse_bestbuy_product(d, url, s):
     invite = any(BB_INVITE.search(b.get("t", "")) and not b.get("d") for b in buttons) or \
         bool(BB_INVITE.search(main[:3000]) and not BB_INVITE_DONE.search(main[:3000]) and
              not any(BB_INVITE.search(b.get("t", "")) and b.get("d") for b in buttons))
-    it = judge({"name": name[:160], "url": url, "price": price, "in_stock": in_stock or invite, "third_party": third}, s)
+    it = judge({"name": name[:160], "url": url, "price": price, "in_stock": in_stock or invite, "third_party": third}, s, "bestbuy")
     if invite and it["status"] in ("in", "nolimit"):
         it["status"] = "invite"                 # invite requests are open: enter for a chance to buy
     return it
@@ -2726,7 +2774,7 @@ def parse_amazon_product(d, url, s):
     invite = any(AMZ_INVITE.search(b.get("t", "")) and not b.get("d") for b in buttons) or \
         bool(AMZ_INVITE.search(main[:4000]) and not AMZ_INVITE_DONE.search(main[:4000]))
     it = judge({"name": name[:160], "url": url, "price": price, "in_stock": in_stock or invite,
-                "third_party": not from_amazon}, s)
+                "third_party": not from_amazon}, s, "amazon")
     if invite and it["status"] in ("in", "nolimit"):
         it["status"] = "invite"
     return it
@@ -2744,7 +2792,56 @@ def parse_amazon_search(d, s):
         in_stock = (bool(_re.search(r"add to cart|in stock|ships to|delivery", t, _re.I))
                     and not _re.search(r"currently unavailable|out of stock", t, _re.I)) or bool(AMZ_INVITE.search(t))
         it = judge({"name": c["name"][:160], "url": c["href"].split("/ref=")[0], "price": store_price(t),
-                    "in_stock": in_stock, "third_party": False, "from_scan": True}, s)
+                    "in_stock": in_stock, "third_party": False, "from_scan": True}, s, "amazon")
+        if it["status"] == "in":
+            items.append(it)
+    return items
+
+
+WM_OUT = _re.compile(r"\bout of stock\b|get in-stock alert|currently unavailable|not available|"
+                     r"this item is no longer available", _re.I)
+WM_SELLER = _re.compile(r"sold (?:(?:&|and) shipped )?by\s*\n?\s*([^\n]+)", _re.I)
+WM_OTHER = _re.compile(r"\n(?:similar items you might like|customers also (?:considered|viewed|bought)|"
+                     r"more items to explore|frequently bought together|popular items|sponsored products|"
+                     r"compare similar items)\b", _re.I)
+
+
+def parse_walmart_product(d, url, s):
+    """A Walmart product page: official Pokémon cards SOLD BY WALMART (not Marketplace sellers), at MSRP."""
+    text = d.get("text", "")
+    name = None
+    for o in walk_ld(d.get("ld", [])):
+        if str(o.get("@type", "")).lower() == "product" and not name:
+            name = o.get("name")
+    if not name:
+        name = _re.sub(r"\s*-\s*Walmart\.com\s*$", "", d.get("title", "")).strip() or url
+    main = WM_OTHER.split(OTHER_PRODUCTS.split(text, 1)[0], 1)[0]
+    pos = main.find(name[:25]) if name else -1
+    price = store_price(main[pos:] if pos >= 0 else main)
+    buttons = d.get("buttons", [])
+    buy = any(not b.get("d") and _re.search(r"add to cart|pre-?order", b.get("t", ""), _re.I) for b in buttons)
+    if WM_OUT.search(main[:4000]):
+        in_stock = False
+    else:
+        in_stock = buy and bool(_re.search(r"add to cart|pre-?order", main, _re.I))
+    seller = WM_SELLER.search(main)
+    from_walmart = bool(seller and "walmart" in seller.group(1).lower())
+    return judge({"name": name[:160], "url": url, "price": price, "in_stock": in_stock,
+                  "third_party": not from_walmart}, s, "walmart")
+
+
+def parse_walmart_search(d, s):
+    """Search is already filtered to 'sold by Walmart'; each hit is double-checked on its own page."""
+    items = []
+    for c in d.get("cards", []):
+        if not is_tcg(c["name"]) or "/ip/" not in c["href"]:
+            continue
+        t = c.get("text", "")
+        if _re.search(r"\bsponsored\b", t, _re.I):
+            continue
+        in_stock = bool(_re.search(r"add to cart|pre-?order", t, _re.I)) and not WM_OUT.search(t)
+        it = judge({"name": c["name"][:160], "url": c["href"].split("?")[0], "price": store_price(t),
+                    "in_stock": in_stock, "third_party": False, "from_scan": True}, s, "walmart")
         if it["status"] == "in":
             items.append(it)
     return items
@@ -2760,7 +2857,7 @@ def parse_bestbuy_search(d, s):
         seller = BB_SELLER.search(t)
         third = bool(seller and "best buy" not in seller.group(1).lower())
         it = judge({"name": c["name"][:160], "url": c["href"], "price": store_price(t), "in_stock": in_stock,
-                    "third_party": third, "from_scan": True}, s)
+                    "third_party": third, "from_scan": True}, s, "bestbuy")
         if it["status"] == "in":
             items.append(it)
     return items
@@ -2811,11 +2908,11 @@ def parse_walmart(d, s):
         else:
             status = "unknown"
         price = store_price(t)
-        limit = msrp_limit(c["name"], s)
+        limit = msrp_limit(c["name"], s, "walmart")
         out.append({"name": c["name"][:160], "url": c.get("href") or WALMART_DRAW, "price": price, "limit": limit,
                     "status": status, "when": when[:60],
                     "msrp_ok": limit is not None and not NOT_RETAIL.search(c["name"])
-                               and (price is None or price <= limit + allowance_for(limit, s) + 0.005)})
+                               and (price is None or price <= limit + allowance_for(limit, s) + ROUNDING)})
     order = {"open": 0, "upcoming": 1, "unknown": 2, "closed": 3}
     out.sort(key=lambda x: order[x["status"]])
     closed = [x for x in out if x["status"] == "closed"][:4]
@@ -2886,7 +2983,7 @@ def read_in_tab(name, url):
         tab = checker_tab(name, url)
     try:
         wait_for_load(tab, checker_stop, min_wait=4, max_wait=30)
-        err = ""
+        err, seen = "", None
         for _ in range(3):
             out, err = run_js(tab, READ_JS)
             if out and not err:
@@ -2894,10 +2991,13 @@ def read_in_tab(name, url):
                     d = json.loads(out)
                     if d.get("cards") or d.get("text", "").strip():
                         return d
+                    seen = d
                 except ValueError:
                     pass
             if checker_stop.wait(4):
                 break
+        if seen and seen.get("title"):
+            return seen                         # e.g. a robot-check page: the caller recognizes it
         if "allow javascript" in err.lower() or "apple events" in err.lower():
             raise RuntimeError("Chrome is blocking it. Turn on View > Developer > Allow JavaScript from Apple Events")
         raise RuntimeError("the page didn't load. It'll try again at the next check")
@@ -3114,6 +3214,10 @@ SHOP_TESTS = {"pkc": lambda s: send_pkc_test(s), "target": lambda s: send_target
               "walmart": lambda s: send_walmart_test(s)}
 
 
+def walmart_alert(s, it, test=False):
+    shop_alert(s, it, "walmart", test)
+
+
 def amazon_alert(s, it, test=False):
     shop_alert(s, it, "amazon", test)
 
@@ -3165,7 +3269,9 @@ SHOPS = {"target": {"search": TARGET_SEARCH, "product": parse_target_product, "s
          "bestbuy": {"search": BESTBUY_SEARCH, "product": parse_bestbuy_product, "scan": parse_bestbuy_search,
                      "alert": bestbuy_alert, "own": "Best Buy's own price"},
          "amazon": {"search": AMAZON_SEARCH, "product": parse_amazon_product, "scan": parse_amazon_search,
-                    "alert": amazon_alert, "own": "Amazon's own price"}}
+                    "alert": amazon_alert, "own": "Amazon's own price"},
+         "walmart": {"search": WALMART_SEARCH, "product": parse_walmart_product, "scan": parse_walmart_search,
+                     "alert": walmart_alert, "own": "Walmart's own price"}}
 
 
 def _run_shop(name, s):
@@ -3179,6 +3285,7 @@ def _run_shop(name, s):
         c["items"] = []
         return
     items, seen, problems = [], set(), []
+    scanned = None
     started = time.time()
     for i, url in enumerate(urls):
         if checker_stop.is_set():
@@ -3195,6 +3302,10 @@ def _run_shop(name, s):
         check_block(d)
         if url == cfg["search"]:
             found = []
+            scanned = sum(1 for x in d.get("cards", []) if is_tcg(x.get("name", "")))
+            if not scanned:
+                log(f"{site}: the search page showed no Pokémon card products this time "
+                    f"(page title: \"{(d.get('title') or 'none')[:70]}\").")
             for cand in cfg["scan"](d, s)[:5]:             # search results don't show the seller,
                 if cand["url"] in seen:                    # so open each hit to double-check
                     continue
@@ -3239,8 +3350,8 @@ def _run_shop(name, s):
     instock = sum(1 for it in items if it["status"] == "in")
     invites = sum(1 for it in items if it["status"] == "invite")
     c["items"] = items
-    c["message"] = (f"{instock} in stock at MSRP!" if instock else
-                    f"Nothing in stock at MSRP ({len(items)} checked)")
+    seen_txt = (f"{scanned} Pokémon products seen" if scanned is not None else f"{len(items)} checked")
+    c["message"] = (f"{instock} in stock at MSRP!" if instock else f"Nothing in stock at MSRP ({seen_txt})")
     if invites:
         c["message"] += f", {invites} invite{'s' if invites > 1 else ''} open"
     if problems:
@@ -3266,7 +3377,17 @@ def save_walmart_seen(seen):
 
 def run_walmart(s):
     with checkers["walmart"]["lock"]:
+        c = checkers["walmart"]
+        prod_items, prod_msg = [], ""
+        if s.get("walmart_products"):
+            _run_shop("walmart", s)
+            prod_items, prod_msg = list(c["items"]), c["message"]
+            if checker_stop.wait(random.uniform(*CHECK_GAP)):
+                return
         _run_walmart(s)
+        if s.get("walmart_products"):
+            c["items"] = c["items"] + prod_items
+            c["message"] = f"Drawings: {c['message']} · Products: {prod_msg}"
 
 
 def _run_walmart(s):
@@ -3901,7 +4022,7 @@ try{document.documentElement.dataset.theme=localStorage.getItem("qw-theme")||"ne
     <label class="swrow"><span>Target restocks</span><span class="switch"><input type="checkbox" data-mirror="target_enabled"><span></span></span></label>
     <label class="swrow"><span>Best Buy restocks &amp; invites</span><span class="switch"><input type="checkbox" data-mirror="bestbuy_enabled"><span></span></span></label>
     <label class="swrow"><span>Amazon restocks &amp; invites</span><span class="switch"><input type="checkbox" data-mirror="amazon_enabled"><span></span></span></label>
-    <label class="swrow"><span>Walmart drawings</span><span class="switch"><input type="checkbox" data-mirror="walmart_enabled"><span></span></span></label>
+    <label class="swrow"><span>Walmart restocks &amp; drawings</span><span class="switch"><input type="checkbox" data-mirror="walmart_enabled"><span></span></span></label>
   </div>
 </div>
 <!-- ===== Target restocks ===== -->
@@ -4011,7 +4132,7 @@ try{document.documentElement.dataset.theme=localStorage.getItem("qw-theme")||"ne
 <!-- ===== Walmart drawings ===== -->
 <div class="card" id="walmartCard">
   <div class="cardhead">
-    <span class="cardtitle" style="margin:0">Walmart drawings</span>
+    <span class="cardtitle" style="margin:0">Walmart restocks &amp; drawings</span>
     <label class="switch" title="Turn the Walmart checker on or off"><input type="checkbox" id="walmart_enabled"><span></span></label>
   </div>
   <div class="sub" id="walmartStatus">Off</div>
@@ -4025,7 +4146,20 @@ try{document.documentElement.dataset.theme=localStorage.getItem("qw-theme")||"ne
   <details class="inner"><summary>Walmart settings</summary>
     <label>Check every (minutes, 10 or more)</label><input id="walmart_every" type="number" min="10">
     <label class="check"><input type="checkbox" id="walmart_msrp_only"> Only alert me for drawings at or under my MSRP limits</label>
-    <p class="sub" style="margin-top:8px">Watches Walmart's collectibles drawing page and pings you when a Pok&eacute;mon drawing opens or is announced. You still enter yourself.</p>
+    <label class="check"><input type="checkbox" id="walmart_products"> Also check Walmart's Pok&eacute;mon card products for MSRP restocks (sold by Walmart only)</label>
+    <label>Walmart product links to watch, one per line (up to 10)</label>
+    <textarea id="walmart_watch" rows="3" spellcheck="false" placeholder="https://www.walmart.com/ip/.../123456789"></textarea>
+    <label class="check"><input type="checkbox" id="walmart_open_page"> Open the product page in Chrome when it's in stock</label>
+    <label>Who to @ for Walmart restocks</label>
+    <select id="walmart_mention">
+      <option value="same">The Walmart role (set in Discord settings)</option>
+      <option value="none">Nobody</option>
+      <option value="here">@here</option>
+      <option value="everyone">@everyone</option>
+    </select>
+    <label>Discord message for restocks (use {item}, {price} and {link})</label>
+    <textarea id="discord_walmart_msg" rows="3"></textarea>
+    <p class="sub" style="margin-top:8px">Watches Walmart's collectibles drawing page and pings you when a Pok&eacute;mon drawing opens or is announced (you still enter yourself). It also checks Walmart's Pok&eacute;mon card search for products <b>sold by Walmart</b> at MSRP (no merch, no Marketplace resellers).</p>
     <div class="btns"><button class="plain" onclick="save()">Save</button></div>
   </details>
 </div>
@@ -4033,8 +4167,15 @@ try{document.documentElement.dataset.theme=localStorage.getItem("qw-theme")||"ne
 <div class="card">
   <details class="inner flush"><summary>Price limits (MSRP) &amp; how stores are read</summary>
     <label>Alert up to this many dollars over retail ($). Cheap items get less: never more than 25% over.</label><input id="msrp_allowance" type="number" min="0" step="1">
-    <label>Retail prices: <code>Product | price</code>, one per line. The most specific line goes first (the first match wins). Bundles count each item, so a 2-pack is 2x. Used by Target, Best Buy, Amazon and Walmart.</label>
-    <textarea id="msrp_limits" rows="8" spellcheck="false"></textarea>
+    <p class="sub">Each store has its own list, because they price things differently. Format: <code>Product | price</code>, one per line, most specific first (the first match wins). Bundles count each item, so a 2-pack is 2x. Every limit also gets a small cushion so a few cents of rounding never blocks an alert.</p>
+    <label>Target (Target's own shelf prices)</label>
+    <textarea id="msrp_limits" rows="6" spellcheck="false"></textarea>
+    <label>Best Buy</label>
+    <textarea id="msrp_bestbuy" rows="6" spellcheck="false"></textarea>
+    <label>Amazon</label>
+    <textarea id="msrp_amazon" rows="6" spellcheck="false"></textarea>
+    <label>Walmart</label>
+    <textarea id="msrp_walmart" rows="6" spellcheck="false"></textarea>
     <label class="check"><input type="checkbox" id="checker_invisible"> Read store pages invisibly (no windows or tabs). Recommended.</label>
     <div class="btns"><button class="plain" onclick="save()">Save</button></div>
   </details>
@@ -4211,7 +4352,7 @@ try{document.documentElement.dataset.theme=localStorage.getItem("qw-theme")||"ne
 </div>
 <script>
 const TOKEN="__TOKEN__";
-const FIELDS=["discord_webhook","discord_webhook_target","discord_webhook_walmart","discord_role_target","discord_role_walmart","discord_webhook_bestbuy","discord_role_bestbuy","discord_webhook_amazon","discord_role_amazon","discord_role_all","amazon_watch","amazon_every","amazon_mention","discord_amazon_msg","bestbuy_watch","bestbuy_every","bestbuy_mention","discord_bestbuy_msg","discord_name","discord_queue_msg","discord_headsup_msg","discord_mention","discord_user_id","news_feeds","target_watch","target_hours","target_every","target_mention","discord_target_msg","walmart_every","msrp_limits","msrp_allowance","login_url","signed_in_words","signed_out_words","ntfy_topic","min_wait","max_wait","watch_url","queue_words","block_words","headsup_words"];
+const FIELDS=["discord_webhook","discord_webhook_target","discord_webhook_walmart","discord_role_target","discord_role_walmart","discord_webhook_bestbuy","discord_role_bestbuy","discord_webhook_amazon","discord_role_amazon","discord_role_all","msrp_bestbuy","msrp_amazon","msrp_walmart","walmart_watch","walmart_mention","discord_walmart_msg","amazon_watch","amazon_every","amazon_mention","discord_amazon_msg","bestbuy_watch","bestbuy_every","bestbuy_mention","discord_bestbuy_msg","discord_name","discord_queue_msg","discord_headsup_msg","discord_mention","discord_user_id","news_feeds","target_watch","target_hours","target_every","target_mention","discord_target_msg","walmart_every","msrp_limits","msrp_allowance","login_url","signed_in_words","signed_out_words","ntfy_topic","min_wait","max_wait","watch_url","queue_words","block_words","headsup_words"];
 let filled=false;
 async function api(path,body){
   const r=await fetch(path,{method:body===undefined?"GET":"POST",
@@ -4226,7 +4367,7 @@ async function save(){
   s.discord_enabled=document.getElementById("discord_enabled").checked;
   s.schedule_mode=schedMode;s.schedule_custom=week;
   s.check_signed_in=document.getElementById("check_signed_in").checked;
-  ["target_enabled","target_scan","target_open_page","walmart_enabled","walmart_msrp_only","checker_invisible","pkc_background","phone_control","bestbuy_enabled","bestbuy_scan","bestbuy_open_page","amazon_enabled","amazon_scan","amazon_open_page"].forEach(k=>s[k]=document.getElementById(k).checked);
+  ["target_enabled","target_scan","target_open_page","walmart_enabled","walmart_msrp_only","checker_invisible","pkc_background","phone_control","bestbuy_enabled","bestbuy_scan","bestbuy_open_page","amazon_enabled","amazon_scan","amazon_open_page","walmart_products","walmart_open_page"].forEach(k=>s[k]=document.getElementById(k).checked);
   s.auto_login=document.getElementById("auto_login").checked;
   const r=await api("/save",s);fill(r.settings,true);
   ["saved","discordMsg"].forEach(id=>{const el=document.getElementById(id);el.textContent="Saved";
@@ -4295,7 +4436,7 @@ function fill(s,force){
   document.getElementById("discord_enabled").checked=!!s.discord_enabled;
   if(!force)fillSchedule(s);
   document.getElementById("check_signed_in").checked=!!s.check_signed_in;
-  ["target_enabled","target_scan","target_open_page","walmart_enabled","walmart_msrp_only","checker_invisible","pkc_background","phone_control","bestbuy_enabled","bestbuy_scan","bestbuy_open_page","amazon_enabled","amazon_scan","amazon_open_page"].forEach(k=>document.getElementById(k).checked=!!s[k]);
+  ["target_enabled","target_scan","target_open_page","walmart_enabled","walmart_msrp_only","checker_invisible","pkc_background","phone_control","bestbuy_enabled","bestbuy_scan","bestbuy_open_page","amazon_enabled","amazon_scan","amazon_open_page","walmart_products","walmart_open_page"].forEach(k=>document.getElementById(k).checked=!!s[k]);
   showPhoneLinks(s);
   document.getElementById("auto_login").checked=!!s.auto_login;
   showLogin(s);
