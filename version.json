@@ -1,22 +1,22 @@
 {
-  "version": "4.6",
-  "notes": "4.6: Walmart now checks Pok\u00e9mon card products sold by Walmart at MSRP (plus drawings). Each store has its own MSRP list, with a small rounding cushion. Fixed Best Buy reading its new product links. Amazon robot checks are recognized and it backs off. Status shows how many products each store saw.",
+  "version": "4.7",
+  "notes": "4.7: removed the Amazon checker (Amazon alerts now come from your Keepa script). Everything else is the same.",
   "files": {
     "mac": {
-      "Resources/watcher_app.py": "66a9490fc56352f8d6c91214c16846879e09296b075903325b63bda900c441b5",
+      "Resources/watcher_app.py": "19548f396d1fa7212076120c9a0e498b02bd08ff7d0bf6d82e21ea8b567d9604",
       "Resources/panel.js": "1ca5a1d6d0fd91e7526c6be3c75955b16928013fb0243bde1f4cdd37b7fa6e40",
-      "Resources/app_version": "8048d1e7e392843de42064d4c1ae59880ce5b149895a2cb79b0680fbf35e488c",
+      "Resources/app_version": "597fd61a4dc22d0cf28dd3e89619b1e8cab79ebc61a95aa784a93baab3eecc3a",
       "Resources/panel_version": "022804d19c8fe566dc00dca4721c1eadf6ed71164d647a2e77493ac87c4fe3a6",
       "Resources/AppIcon.icns": "6b37b4479b291aba49e8a189be4dfdfef8727216e8a1fd48b2ff0b22956bdb5c",
       "Resources/guardian_avatar.png": "f1f0d53666d79a1c9e0d788861d6fa47e09b3d4f5fc6bcd2eb388990563c7ad6",
       "MacOS/QueueWatcher": "8278214b1cf0317480d859208b60e2848ac6bc6b14c1ba344f656b9d1cfb8c48",
-      "Info.plist": "3e38523dfdec44ca6f87d4a402eb9f2f5833f1576994afa881b3634bcbeb10db"
+      "Info.plist": "0240cd9a3a2cdebf2f8a458834d1faeb392658b93d61346d7363b9c14438816e"
     },
     "windows": {
-      "watcher_app.py": "c62e464523b00151bf56410b94487a56859b341ce583b1e0631125aafd04e928",
+      "watcher_app.py": "098540a5bdf3586e2af53e65053bd1a216c36867c343ea390891eaba0f1ab776",
       "winplat.py": "9a44879168a95d934a5f1325dc5ee6aa5fccaf180411523f30bee7455bdeb44a",
       "launcher.pyw": "8e8fc021d3aaad76e3cc9a864e401095882c5f7ceedee8bd185d4200af4f4039",
-      "app_version": "8048d1e7e392843de42064d4c1ae59880ce5b149895a2cb79b0680fbf35e488c",
+      "app_version": "597fd61a4dc22d0cf28dd3e89619b1e8cab79ebc61a95aa784a93baab3eecc3a",
       "QueueWatcher.ico": "e7595b3aaedf2f63af463c789f9867448880ce238fc94752a746204b15954557",
       "guardian_avatar.png": "f1f0d53666d79a1c9e0d788861d6fa47e09b3d4f5fc6bcd2eb388990563c7ad6"
     }
