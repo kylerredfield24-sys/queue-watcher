@@ -6,7 +6,22 @@ Runs a small control panel in its own window (only on this PC).
 Start watching -> refreshes Pokemon Center in its own Chrome window.
 Queue found   -> stops refreshing, pings phone (ntfy) + Discord + Mac, then turns off.
 """
-
+import asyncio
+import logging
+import importlib.util as _ilu
+import subprocess as _sp
+import sys as _sys
+# These two aren't built into Python. If this PC doesn't have them yet, install them before starting,
+# so an update never leaves Guardian Monitor unable to open.
+_need = [p for p in ("aiohttp", "websockets") if not _ilu.find_spec(p)]
+if _need:
+    _py = _sys.executable
+    if _py.lower().endswith("pythonw.exe"):
+        _py = _py[:-11] + "python.exe"
+    _sp.run([_py, "-m", "pip", "install", *_need], capture_output=True, timeout=600,
+            creationflags=0x08000000 if _sys.platform == "win32" else 0)
+import aiohttp
+import websockets
 import json
 import os
 import random
@@ -23,7 +38,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs
 
 PORT = 8765
-VERSION = "5.5"   # the launcher compares this, and replaces an older copy that's still running
+VERSION = "5.6"   # the launcher compares this, and replaces an older copy that's still running
 PLATFORM = "mac"  # the Windows version switches this to "windows"
 TOKEN = secrets.token_hex(16)
 PAGE_LOAD_WAIT = 8
@@ -1474,33 +1489,169 @@ def captcha_ping(s, site, where):
              f"{site} is showing a robot check (captcha). Go to {where} and solve it. "
              "It picks back up by itself once it's done.")
 
+# ==========================================
+# hCaptcha Automated Solver Component (bot.py)
+# ==========================================
+logger = logging.getLogger('hcaptcha_solver')
+API_KEY = "a77913353bc5a80f5d58a8ba48de8b20"
+
+class HCaptchaSolver:
+    def __init__(self, websocket_url):
+        self.ws_url = websocket_url
+        self.session = None
+
+    async def connect_to_browser(self):
+        try:
+            self.session = await websockets.connect(self.ws_url)
+            logger.info("Connected to Chrome DevTools Protocol")
+        except Exception as e:
+            logger.error(f"Connection failed: {str(e)}")
+            raise ConnectionError("Could not connect to browser")
+
+    async def execute_cdp_command(self, command, params=None):
+        params = params or {}
+        message = json.dumps({"id": 1, "method": command, "params": params})
+        await self.session.send(message)
+        response = await self.session.recv()
+        return json.loads(response).get('result', {})
+
+    async def extract_hcaptcha_sitekey(self):
+        try:
+            await self.execute_cdp_command("DOM.enable")
+            doc = await self.execute_cdp_command("DOM.getDocument", {"depth": -1})
+            root_id = doc['root']['nodeId']
+            hcaptcha_nodes = await self.execute_cdp_command(
+                "DOM.querySelectorAll",
+                {"nodeId": root_id, "selector": "iframe[src*='hcaptcha.com'], div[data-sitekey]"}
+            )
+            if not hcaptcha_nodes.get('nodeIds'):
+                raise ValueError("No hCaptcha elements found on store page.")
+            node_id = hcaptcha_nodes['nodeIds'][0]
+            attributes = await self.execute_cdp_command("DOM.getAttributes", {"nodeId": node_id})
+            attrs = dict(zip(attributes['attributes'][::2], attributes['attributes'][1::2]))
+            if 'data-sitekey' not in attrs:
+                raise ValueError("data-sitekey attribute missing from target selector node.")
+            callback = attrs.get('data-callback', 'hcaptchaCallback')
+            return attrs['data-sitekey'], callback
+        except Exception as e:
+            logger.error(f"DOM extraction failed: {str(e)}")
+            raise
+
+    async def fetch_hcaptcha_token(self, sitekey, page_url):
+        logger.info(f"Submitting hCaptcha token job to 2Captcha solver cluster...")
+        async with aiohttp.ClientSession() as http_session:
+            submit_url = "http://2captcha.com"
+            payload = {
+                "key": API_KEY,
+                "method": "hcaptcha",
+                "sitekey": sitekey,
+                "pageurl": page_url,
+                "json": 1
+            }
+            async with http_session.post(submit_url, data=payload) as resp:
+                res_data = await resp.json()
+                if res_data.get("status") != 1:
+                    raise RuntimeError(f"Solver rejection payload: {res_data.get('request')}")
+                task_id = res_data.get("request")
+
+            poll_url = f"http://2captcha.com{API_KEY}&action=get&id={task_id}&json=1"
+            logger.info(f"Task ID {task_id} generated. Polling solution matrix...")
+            for attempt in range(24): 
+                await asyncio.sleep(5)
+                async with http_session.get(poll_url) as resp:
+                    poll_data = await resp.json()
+                    if poll_data.get("status") == 1:
+                        logger.info("Programmatic hCaptcha token resolved successfully!")
+                        return poll_data.get("request")
+                    elif poll_data.get("request") == "CAPCHA_NOT_READY":
+                        continue
+                    else:
+                        raise RuntimeError(f"Polling failure node: {poll_data.get('request')}")
+            raise TimeoutError("Solving pipeline encountered provider timeout parameters.")
+
+    async def inject_and_submit(self, token, callback_name):
+        js = f"""
+        if(document.querySelector('textarea[name="h-captcha-response"]')) {{
+            document.querySelector('textarea[name="h-captcha-response"]').value = '{token}';
+        }}
+        if(document.querySelector('textarea[name="g-recaptcha-response"]')) {{
+            document.querySelector('textarea[name="g-recaptcha-response"]').value = '{token}';
+        }}
+        if (typeof {callback_name} === 'function') {{
+            {callback_name}('{token}');
+        }} else if (typeof window.{callback_name} === 'function') {{
+            window.{callback_name}('{token}');
+        }} else {{
+            console.warn('Target validation hook not natively initialized:', '{callback_name}');
+        }}
+        """
+        try:
+            await self.execute_cdp_command("Runtime.evaluate", {"expression": js, "awaitPromise": False})
+            logger.info("Verification payload injected. Form signature unlocked.")
+            return True
+        except Exception as e:
+            logger.error(f"JavaScript engine bypass runtime error: {str(e)}")
+            return False
+
+async def trigger_background_solve(ws_url, page_url):
+    solver = HCaptchaSolver(ws_url)
+    try:
+        await solver.connect_to_browser()
+        sitekey, callback = await solver.extract_hcaptcha_sitekey()
+        token = await solver.fetch_hcaptcha_token(sitekey, page_url)
+        success = await solver.inject_and_submit(token, callback)
+        return success
+    except Exception as e:
+        logger.error(f"Automated pipeline loop aborted: {str(e)}")
+        return False
 
 def wait_for_captcha(s, stop, win):
-    """Pokémon Center showed a captcha. Don't close or refresh the tab (that loses it): bring it
-    up, ping you right away, and check every 15 seconds until it's solved. True = solved."""
-    log("Pokémon Center is showing a captcha. Pinging you to solve it; the tab stays put.")
-    set_state(message="CAPTCHA: go to the Pokémon Center Chrome window and solve it. Watching resumes after.")
-    bring_to_front(win)
-    captcha_ping(s, "Pokémon Center", "the Pokémon Center Chrome window")
+    """Pokémon Center showed a captcha. Automatically attempts background solving via 2Captcha
+    on Windows while still leaving the window up for manual override."""
+    log("Pokémon Center is showing a captcha. Activating automated background solver...")
+    set_state(message="CAPTCHA detected: Attempting automated solve via API (or you can solve it manually)...")
+    
+    # 1. Connect to the local debugging port we initialized on Windows
+    ws_url = "ws://127.0.0.1:9222/devtools/browser" 
+    url, _, _, _, _ = read_page(win)
+
+    # 2. Fire the asynchronous solver loop inside a clean Windows thread background worker
+    def run_async_solve():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            success = loop.run_until_complete(trigger_background_solve(ws_url, url))
+            if success:
+                log("Automated solver successfully passed the captcha wall!")
+        except Exception as e:
+            log(f"Background solving engine exception: {e}")
+        finally:
+            loop.close()
+
+    threading.Thread(target=run_async_solve, daemon=True).start()
+
+    # 3. Fallback tracking loop: Tracks page state until solved
     start, reminded = time.time(), False
     while not stop.is_set() and time.time() - start < CAPTCHA_WAIT:
-        if stop.wait(15):
+        if stop.wait(5): 
             return False
         url, title, text, _blocked, gone = read_page(win)
         if gone:
             return False
         blob = f"{url}\n{title}\n{text}"
         if text and not captcha_on_page(blob):
-            log("Captcha solved. Watching again.")
+            log("Captcha cleared! Resuming scan queue operations.")
             set_state(message="Watching for a queue...")
-            info_ping(s, "\u2705 Captcha done", "Pokémon Center let you through. Back to watching for a queue.")
+            info_ping(s, "✅ Captcha done", "Pokémon Center let you through. Back to watching for a queue.")
             return True
         if not reminded and time.time() - start > 180:
             reminded = True
             _last_captcha_ping["t"] = 0
             captcha_ping(s, "Pokémon Center", "the Pokémon Center Chrome window (reminder)")
+            
     log("Captcha wasn't solved in 10 minutes. Resting, then opening a fresh tab.")
     return False
+
 
 
 def recover_from_error(s, stop, win, word, streak):

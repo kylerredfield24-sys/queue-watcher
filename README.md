@@ -2,7 +2,9 @@
 
 This repo holds the update files for Guardian Monitor (Mac and Windows). The app's **Update** button reads `version.json`, downloads the listed files, checks each file's SHA-256 fingerprint, and installs them.
 
-Current version: **5.5**
+Current version: **5.6**
+
+5.6: Windows gets your updated watcher_app (installs aiohttp and websockets by itself on first start if they're missing), with the debug Chrome button kept. Mac is unchanged except the version number.
 
 5.5: The debug Chrome button now also checks for websockets and aiohttp and pip installs whichever is missing, then starts Chrome (port 9222, its own profile folder), closing and restarting it if it's stuck. Your phone gets one reply saying what it did. The button is sent to your phone again once.
 
