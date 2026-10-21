@@ -87,7 +87,7 @@ function setup() {
   stopAll();
   ScriptApp.newTrigger('checkKeepa').timeBased().everyMinutes(1).create();
   markAllSeen_();   // old Keepa emails don't get posted
-  post_({ content: '\u{1F9EA} TEST – Amazon alerts are connected (bot code ' + BOT_VERSION + ' from GitHub). (No ping)',
+  post_({ content: '\u{1F9EA} TEST – Amazon alerts are connected. (No ping)',
           allowed_mentions: { parse: [] } });
 }
 
