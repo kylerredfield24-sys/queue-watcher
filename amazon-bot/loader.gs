@@ -40,3 +40,12 @@ function setup()        { CacheService.getScriptCache().remove('code'); bot_().s
 function checkKeepa()   { bot_().checkKeepa(); }
 function previewAlert() { bot_().previewAlert(); }
 function stopAll()      { ScriptApp.getProjectTriggers().forEach(t => ScriptApp.deleteTrigger(t)); }
+
+// Never runs. It's here so Google asks for the right permissions (reading your Keepa emails,
+// posting to Discord, the timer). Google only asks for what it sees in THIS file.
+function permissions_() {
+  GmailApp.search('from:keepa.com', 0, 1);
+  UrlFetchApp.fetch('https://discord.com');
+  ScriptApp.newTrigger('checkKeepa');
+  PropertiesService.getScriptProperties();
+}
