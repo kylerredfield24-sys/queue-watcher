@@ -2,7 +2,9 @@
 
 This repo holds the update files for Guardian Monitor (Mac and Windows). The app's **Update** button reads `version.json`, downloads the listed files, checks each file's SHA-256 fingerprint, and installs them.
 
-Current version: **5.8**
+Current version: **5.9**
+
+5.9: Send `token github_pat_...` to your ntfy command topic and the app tests the token, saves it to github_token.txt, and switches updates to the private repo.
 
 5.8: Updates now come from the private repo (kylerredfield24-sys/guardian-monitor) using a GitHub token saved in github_token.txt in the app's data folder. Without that file the app keeps updating from this public repo.
 

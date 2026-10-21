@@ -1,11 +1,11 @@
 {
-  "version": "5.8",
-  "notes": "5.8: Updates now come from your private GitHub repo using the token in github_token.txt (in the app's data folder). No token file yet? It keeps updating from the old public repo.",
+  "version": "5.9",
+  "notes": "5.9: Set your GitHub token from your phone. In the ntfy app, send this to your command topic: token github_pat_... The app tests it, saves it, and switches updates to your private repo.",
   "files": {
     "mac": {
-      "Resources/watcher_app.py": "0da45a3f2a743008cd823c21ca99c42b9b9f462403bd4bc1979b36ab2c14d50b",
+      "Resources/watcher_app.py": "ec8872ccaba795552babccefa870361f107bf3dd4a603104afdf53a7ae5c1f6c",
       "Resources/panel.js": "1ca5a1d6d0fd91e7526c6be3c75955b16928013fb0243bde1f4cdd37b7fa6e40",
-      "Resources/app_version": "3332ee6c635375ad3af198e5798589ddfe7590295a620ad5925f89817da26947",
+      "Resources/app_version": "b9b5579a161f7aad61d8feb58cb55a8ee60fcbd550cb888bb239ce98e7121a49",
       "Resources/panel_version": "022804d19c8fe566dc00dca4721c1eadf6ed71164d647a2e77493ac87c4fe3a6",
       "Resources/AppIcon.icns": "6b37b4479b291aba49e8a189be4dfdfef8727216e8a1fd48b2ff0b22956bdb5c",
       "Resources/guardian_avatar.png": "f1f0d53666d79a1c9e0d788861d6fa47e09b3d4f5fc6bcd2eb388990563c7ad6",
@@ -13,10 +13,10 @@
       "Info.plist": "f0f40eef20cd9b84b4c4d6ac16b2e2da5653d35c549f33555878a0771ce7beaa"
     },
     "windows": {
-      "watcher_app.py": "9fcc989dd76470864e8838ed7b3de4b81a40c33720cbf21fa83ad25409326956",
+      "watcher_app.py": "5e28809766dea364d7b00e4bbfa3a7c5079610d1c9ac272f4d58f617da96553f",
       "winplat.py": "15f47ef0e672d788cbc2bd55db7d69e65345420272094b1c05b537901ed159df",
       "launcher.pyw": "8e8fc021d3aaad76e3cc9a864e401095882c5f7ceedee8bd185d4200af4f4039",
-      "app_version": "3332ee6c635375ad3af198e5798589ddfe7590295a620ad5925f89817da26947",
+      "app_version": "b9b5579a161f7aad61d8feb58cb55a8ee60fcbd550cb888bb239ce98e7121a49",
       "QueueWatcher.ico": "e7595b3aaedf2f63af463c789f9867448880ce238fc94752a746204b15954557",
       "guardian_avatar.png": "f1f0d53666d79a1c9e0d788861d6fa47e09b3d4f5fc6bcd2eb388990563c7ad6"
     }

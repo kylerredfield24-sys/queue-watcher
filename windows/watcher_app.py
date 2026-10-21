@@ -38,7 +38,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs
 
 PORT = 8765
-VERSION = "5.8"   # the launcher compares this, and replaces an older copy that's still running
+VERSION = "5.9"   # the launcher compares this, and replaces an older copy that's still running
 PLATFORM = "mac"  # the Windows version switches this to "windows"
 TOKEN = secrets.token_hex(16)
 PAGE_LOAD_WAIT = 8
@@ -6002,7 +6002,59 @@ def phone_test(s, text):
     return True
 
 
+def phone_token(s, text):
+    """True if the message was a token command (even if the reply couldn't be sent)."""
+    first = (text.strip().split() or [""])[0].lower()
+    if first not in ("token", "githubtoken", "github_token"):
+        return False
+    _phone_token(s, text)
+    return True
+
+
+def _phone_token(s, text):
+    """'token github_pat_...' from your phone: tests it on the private repo, then saves it to github_token.txt.
+    The token itself is never logged or sent back."""
+    parts = text.strip().split()
+    if not parts or parts[0].lower() not in ("token", "githubtoken", "github_token"):
+        return False
+    if len(parts) != 2 or not _re.fullmatch(r"(github_pat_|ghp_)[A-Za-z0-9_]{20,255}", parts[1]):
+        log("Phone sent a GitHub token, but it didn't look right.")
+        return phone_reply(s, "⚠️ That token didn't look right",
+                           "Send it like this: token github_pat_... (just one space, nothing else).")
+    tok = parts[1]
+    try:
+        req = urllib.request.Request(f"https://raw.githubusercontent.com/{PRIVATE_REPO}/main/version.json",
+                                     headers={"User-Agent": "QueueWatcher-updater", "Cache-Control": "no-cache",
+                                              "Authorization": f"token {tok}"})
+        with fetch(req, timeout=30) as r:
+            json.loads(r.read(200000))
+    except Exception as e:
+        log("Phone sent a GitHub token, but it couldn't read the private repo with it.")
+        return phone_reply(s, "⚠️ Token didn't work",
+                           "GitHub wouldn't let it read guardian-monitor. Check the token has that repo with "
+                           f"Contents: Read-only, then send it again. ({str(e)[:80]})")
+    try:
+        os.makedirs(DATA_DIR, exist_ok=True)
+        tmp = TOKEN_FILE + ".new"
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(tok + "\n")
+        try:
+            os.chmod(tmp, 0o600)
+        except Exception:
+            pass
+        os.replace(tmp, TOKEN_FILE)
+    except Exception as e:
+        log(f"Couldn't save the GitHub token: {e}")
+        return phone_reply(s, "⚠️ Couldn't save the token", "The token works, but saving it failed. Try again.")
+    log("GitHub token saved from your phone. Updates now come from the private repo.")
+    check_update()
+    return phone_reply(s, "🔑 GitHub token saved", "It works. Updates now come from your private repo "
+                       "(guardian-monitor). You can delete the message you sent from the ntfy app.")
+
+
 def phone_command(s, text):
+    if phone_token(s, text):
+        return True
     if phone_setup(s, text) or phone_switch(s, text) or phone_test(s, text):
         return True
     word = text.strip().lower().strip("!. ")
@@ -6040,7 +6092,8 @@ def phone_command(s, text):
         return debug_button(s)
     return phone_reply(s, "Guardian Monitor", "Use the buttons, or send start, stop, status, log or update. "
                        "Store checkers: bestbuy on/off, target on/off, walmart on/off. "
-                       "Tests: test target, test bestbuy, test walmart, test pkc, test all.")
+                       "Tests: test target, test bestbuy, test walmart, test pkc, test all. "
+                       "GitHub token: token github_pat_...")
 
 
 def phone_control_loop():
