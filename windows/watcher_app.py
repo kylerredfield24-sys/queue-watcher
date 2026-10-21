@@ -23,7 +23,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs
 
 PORT = 8765
-VERSION = "5.1"   # the launcher compares this, and replaces an older copy that's still running
+VERSION = "5.2"   # the launcher compares this, and replaces an older copy that's still running
 PLATFORM = "mac"  # the Windows version switches this to "windows"
 TOKEN = secrets.token_hex(16)
 PAGE_LOAD_WAIT = 8
@@ -138,6 +138,7 @@ OLD_DEFAULTS = {
                     "request unsuccessful, access denied, are you a robot"],
 }
 SCRIPT_MARK = "[[qw-waiting-room-script]]"
+CAPTCHA_MARK = "[[qw-captcha-on-page]]"   # a visible captcha / "press and hold" box is on the page
 HEADSUP_COOLDOWN = 15 * 60
 
 REPEAT_ALERTS = 10        # queue alerts repeat until you press "I'm on it" (max this many)
@@ -983,6 +984,9 @@ PAGE_JS = (
     "try{var a=document.querySelectorAll('*');for(var j=0;j<a.length&&j<6000;j++){var r=a[j].shadowRoot;"
     "if(r)t+=' '+(r.textContent||'').slice(0,3000);}}catch(e){}"
     "t+=' '+(document.title||'');"
+    "try{var cs=document.querySelectorAll('iframe[src*=captcha],iframe[src*=hcaptcha],iframe[title*=challenge],"
+    "iframe[src*=challenges],#px-captcha,.h-captcha,[id*=captcha-container]');for(var k=0;k<cs.length;k++){"
+    "var b=cs[k].getBoundingClientRect();if(b.width>100&&b.height>=70){t+=' " + CAPTCHA_MARK + "';break;}}}catch(e){}"
     "if(performance.getEntriesByType('resource').some(function(e){return e.name.indexOf('SWWRGTS') > -1;})"
     " || document.documentElement.innerHTML.indexOf('SWWRGTS') > -1){t+=' " + SCRIPT_MARK + "';}"
     "return t;})()"
@@ -1398,6 +1402,54 @@ def mins(sec):
     return f"{m} minute" + ("" if m == 1 else "s")
 
 
+CAPTCHA_RX = _re.compile(r"(?:solve|complete) the (?:captcha|puzzle)|are you a robot|robot or human|press (?:&|and) hold|verify (?:that )?(?:you are|you're) "
+                        r"(?:a )?human|not a robot|human verification|pardon our interruption", _re.I)
+CAPTCHA_WAIT = 10 * 60          # how long it holds the tab for you to solve it
+_last_captcha_ping = {"t": 0}
+
+
+def captcha_on_page(blob):
+    return CAPTCHA_MARK.lower() in blob.lower() or bool(CAPTCHA_RX.search(blob or ""))
+
+
+def captcha_ping(s, site, where):
+    """Urgent phone + computer ping: a captcha is up, go solve it. Never Discord."""
+    if time.time() - _last_captcha_ping["t"] < 90:
+        return
+    _last_captcha_ping["t"] = time.time()
+    send_all(s, f"\U0001F9E9 Solve the {site} captcha now",
+             f"{site} is showing a robot check (captcha). Go to {where} and solve it. "
+             "It picks back up by itself once it's done.")
+
+
+def wait_for_captcha(s, stop, win):
+    """Pokémon Center showed a captcha. Don't close or refresh the tab (that loses it): bring it
+    up, ping you right away, and check every 15 seconds until it's solved. True = solved."""
+    log("Pokémon Center is showing a captcha. Pinging you to solve it; the tab stays put.")
+    set_state(message="CAPTCHA: go to the Pokémon Center Chrome window and solve it. Watching resumes after.")
+    bring_to_front(win)
+    captcha_ping(s, "Pokémon Center", "the Pokémon Center Chrome window")
+    start, reminded = time.time(), False
+    while not stop.is_set() and time.time() - start < CAPTCHA_WAIT:
+        if stop.wait(15):
+            return False
+        url, title, text, _blocked, gone = read_page(win)
+        if gone:
+            return False
+        blob = f"{url}\n{title}\n{text}"
+        if text and not captcha_on_page(blob):
+            log("Captcha solved. Watching again.")
+            set_state(message="Watching for a queue...")
+            info_ping(s, "\u2705 Captcha done", "Pokémon Center let you through. Back to watching for a queue.")
+            return True
+        if not reminded and time.time() - start > 180:
+            reminded = True
+            _last_captcha_ping["t"] = 0
+            captcha_ping(s, "Pokémon Center", "the Pokémon Center Chrome window (reminder)")
+    log("Captcha wasn't solved in 10 minutes. Resting, then opening a fresh tab.")
+    return False
+
+
 def recover_from_error(s, stop, win, word, streak):
     """Close the error tab, rest, open a fresh one. Returns the new tab (None if stopped/couldn't)."""
     wait = error_cooldown(word, streak)
@@ -1542,7 +1594,14 @@ def watch(s, stop):
                     queue_alerts(s, win, word, text)
                     return
 
-                word = find_word(blob, block_words)
+                if captcha_on_page(f"{url}\n{title}\n{text}"):
+                    if wait_for_captcha(s, stop, win):
+                        error_streak = 0
+                        continue
+                    if stop.is_set():
+                        break
+
+                word = find_word(blob, block_words) or ("captcha" if captcha_on_page(f"{title}\n{text}") else None)
                 if word:
                     again = recover_from_error(s, stop, win, word, error_streak)
                     error_streak += 1
@@ -1573,7 +1632,8 @@ def watch(s, stop):
                     login_checked = True
                     check_sign_in(win, s, text, stop)
 
-            wait = int(random.randint(s["min_wait"], s["max_wait"]) * (2 if health["level"] in ("warm", "hot") else 1))
+            wait = int(random.randint(s["min_wait"], s["max_wait"]) * (2 if health["level"] in ("warm", "hot") else 1)
+                       * (1 if in_drop_hours() else 2))     # gentler on the site outside drop hours
             if stop.wait(wait):
                 break
             if tab_gone(win, stop):
@@ -2572,7 +2632,7 @@ BESTBUY_SEARCH = "https://www.bestbuy.com/site/searchpage.jsp?st=pokemon+trading
 WALMART_SEARCH = "https://www.walmart.com/search?q=pokemon+trading+card+game&facet=retailer_type%3AWalmart"
 SITE_NAMES = {"target": "Target", "walmart": "Walmart", "bestbuy": "Best Buy"}
 WALMART_SEEN_FILE = os.path.join(DATA_DIR, "walmart_seen.json")
-CHECK_GAP = (5, 10)             # seconds between page loads inside one check (gentle on the site)
+CHECK_GAP = (8, 16)             # seconds between page loads inside one check (gentle on the site)
 BLOCK_PAUSE = 30 * 60           # if a site shows a robot check, back off this long
 CHECKER_BLOCK = _re.compile(r"robot or human|press (?:&|and) hold|verify (?:that )?(?:you are|you're) (?:a )?human|"
                             r"enter the characters you see|make sure you'?re not a robot|to discuss automated access|"
@@ -3697,13 +3757,17 @@ def checker_loop(name):
                 except Blocked:
                     c["paused_until"] = time.time() + BLOCK_PAUSE
                     site = SITE_NAMES.get(name, name.title())
-                    log(f"{site} showed a robot check. Pausing that checker for 30 minutes.")
+                    c["slow_until"] = time.time() + 3 * 3600
+                    log(f"{site} showed a robot check. Pausing that checker for 30 minutes, then checking "
+                        "half as often for 3 hours.")
+                    close_checker_tab(name)
                     if not c["block_pinged"]:
                         c["block_pinged"] = True
-                        send_all(s, f"{site} checker paused",
-                                 f"{site} showed a robot check, so that checker is resting for 30 minutes. "
-                                 "Your other checkers keep running.")
-                    close_checker_tab(name)
+                        try:
+                            open_in_chrome(SHOPS[name]["search"])     # put the page up so you can solve it
+                        except Exception:
+                            pass
+                        captcha_ping(s, site, f"the {site} page it just opened in Chrome")
                     continue
                 except Exception as e:
                     c.update(status="error", message=f"Problem: {e}")
@@ -3712,6 +3776,8 @@ def checker_loop(name):
                 every = max({"target": 2, "walmart": 10, "bestbuy": 3}[name], int(s[f"{name}_every"]))
                 if name == "walmart" and any(i.get("status") == "upcoming" for i in c["items"]):
                     every = min(every, 3)   # a drawing is coming up: check every ~3 min so the "open" ping is fast
+                if time.time() < c.get("slow_until", 0):
+                    every *= 2                      # it was just blocked: go easy for a while
                 c["next"] = time.time() + every * 60 * random.uniform(0.9, 1.15) * health_factor()
             c["wake"].wait(10)
         except Exception as e:
@@ -3745,6 +3811,14 @@ def eastern_now():
         return datetime.now(ZoneInfo("America/New_York"))
     except Exception:
         return datetime.now()
+
+
+def in_drop_hours():
+    """Weekday ~9:45 AM - 2:30 PM Eastern, when Pokémon Center queues have opened before."""
+    now = eastern_now()
+    d = SMART_WEEK[str(now.weekday())]
+    m = now.hour * 60 + now.minute
+    return d["on"] and hm(d["start"]) <= m <= hm(d["end"])
 
 
 def week_for(s):
