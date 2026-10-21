@@ -1018,6 +1018,7 @@ def main():
     threading.Thread(target=W.update_loop, daemon=True).start()
     threading.Thread(target=W.phone_control_loop, daemon=True).start()
     threading.Thread(target=W.debug_chrome_ping, daemon=True).start()
+    threading.Thread(target=W.updated_ping, daemon=True).start()
     threading.Thread(target=W.health_loop, daemon=True).start()
     threading.Thread(target=W.apply_branding, daemon=True).start()
     W.apply_roles()

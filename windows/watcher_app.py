@@ -38,7 +38,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs
 
 PORT = 8765
-VERSION = "5.6"   # the launcher compares this, and replaces an older copy that's still running
+VERSION = "5.7"   # the launcher compares this, and replaces an older copy that's still running
 PLATFORM = "mac"  # the Windows version switches this to "windows"
 TOKEN = secrets.token_hex(16)
 PAGE_LOAD_WAIT = 8
@@ -68,6 +68,7 @@ DEFAULTS = {
     "roles_v4": False,
     "brand_v2": False,
     "debug_btn_v2": False,           # temporary debug Chrome button already sent
+    "last_run_version": "",         # so the app can say "Updated to X" after an update
     "update_pinged": "",             # newest version your phone was already told about
     "discord_user_id": "",          # user ID or role ID, used with "user"/"role" below
     "discord_mention": "user",       # none | here | everyone | role | user
@@ -347,6 +348,7 @@ def clean_settings(new):
     s["roles_v4"] = s.get("roles_v4") in (True, "true", 1, "1")
     s["brand_v2"] = s.get("brand_v2") in (True, "true", 1, "1")
     s["debug_btn_v2"] = s.get("debug_btn_v2") in (True, "true", 1, "1")
+    s["last_run_version"] = str(s.get("last_run_version", ""))[:20]
     s["update_pinged"] = str(s.get("update_pinged", ""))[:20]
     for key in ("discord_webhook", "discord_webhook_target", "discord_webhook_walmart", "discord_webhook_bestbuy"):
         u = str(s.get(key, "")).strip()
@@ -6521,6 +6523,21 @@ def debug_button(s):
     lines.append(chrome_msg)
     all_ok = ok and not any(l.startswith("❌") for l in lines)
     return phone_reply(s, "🧪 Debug setup done" if all_ok else "⚠️ Debug setup had a problem", "\n".join(lines))
+
+
+def updated_ping():
+    """After an update installs and the app restarts: tell your phone it went through."""
+    time.sleep(10)
+    s = load_settings()
+    if s.get("last_run_version") == VERSION:
+        return
+    with settings_lock:
+        fresh = load_settings()
+        fresh["last_run_version"] = VERSION
+        save_settings(fresh)
+    if s["ntfy_topic"]:
+        phone_reply(s, f"✅ Updated to {VERSION}", "Guardian Monitor restarted on the new version.\n" + status_text())
+    log(f"Running version {VERSION}.")
 
 
 def debug_chrome_ping():

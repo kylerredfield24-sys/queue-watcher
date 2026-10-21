@@ -2,7 +2,9 @@
 
 This repo holds the update files for Guardian Monitor (Mac and Windows). The app's **Update** button reads `version.json`, downloads the listed files, checks each file's SHA-256 fingerprint, and installs them.
 
-Current version: **5.6**
+Current version: **5.7**
+
+5.7: After an update installs and the app restarts, your phone now gets a "✅ Updated to X" message with the current status, so you know it went through.
 
 5.6: Windows gets your updated watcher_app (installs aiohttp and websockets by itself on first start if they're missing), with the debug Chrome button kept. Mac is unchanged except the version number.
 
