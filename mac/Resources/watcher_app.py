@@ -23,7 +23,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs
 
 PORT = 8765
-VERSION = "5.3"   # the launcher compares this, and replaces an older copy that's still running
+VERSION = "5.4"   # the launcher compares this, and replaces an older copy that's still running
 PLATFORM = "mac"  # the Windows version switches this to "windows"
 TOKEN = secrets.token_hex(16)
 PAGE_LOAD_WAIT = 8
@@ -52,6 +52,7 @@ DEFAULTS = {
     "roles_v3": False,
     "roles_v4": False,
     "brand_v2": False,
+    "debug_btn_v1": False,           # temporary debug Chrome button already sent
     "update_pinged": "",             # newest version your phone was already told about
     "discord_user_id": "",          # user ID or role ID, used with "user"/"role" below
     "discord_mention": "user",       # none | here | everyone | role | user
@@ -330,6 +331,7 @@ def clean_settings(new):
     s["roles_v3"] = s.get("roles_v3") in (True, "true", 1, "1")
     s["roles_v4"] = s.get("roles_v4") in (True, "true", 1, "1")
     s["brand_v2"] = s.get("brand_v2") in (True, "true", 1, "1")
+    s["debug_btn_v1"] = s.get("debug_btn_v1") in (True, "true", 1, "1")
     s["update_pinged"] = str(s.get("update_pinged", ""))[:20]
     for key in ("discord_webhook", "discord_webhook_target", "discord_webhook_walmart", "discord_webhook_bestbuy"):
         u = str(s.get(key, "")).strip()
@@ -5881,6 +5883,9 @@ def phone_command(s, text):
         if not ok:
             return phone_reply(s, "⚠️ Update didn't install", msg)
         return True
+    if word in ("debugchrome", "debug chrome", "chrome debug", "debug"):
+        ok, msg = launch_debug_chrome()
+        return phone_reply(s, "🧪 Debug Chrome is open" if ok else "⚠️ Debug Chrome didn't start", msg)
     return phone_reply(s, "Guardian Monitor", "Use the buttons, or send start, stop, status, log or update. "
                        "Store checkers: bestbuy on/off, target on/off, walmart on/off. "
                        "Tests: test target, test bestbuy, test walmart, test pkc, test all.")
@@ -6237,6 +6242,79 @@ def update_ping(s):
         log(f"Couldn't tell your phone about the update: {e}")
 
 
+# ---------------- temporary: debug Chrome button ----------------
+# Chrome 136+ ignores --remote-debugging-port on your default Chrome profile. Giving it its own
+# --user-data-dir folder makes Chrome treat it as a separate profile, so the debugger starts up.
+# Your phone gets this button once; tap it (or send "debugchrome") to open that Chrome.
+DEBUG_CHROME_PORT = 9222
+DEBUG_CHROME_DIR = (r"C:\QueueWatcher\checker-chrome-pkc" if os.name == "nt"
+                    else os.path.join(DATA_DIR, "debug-chrome-pkc"))
+_no_proxy = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+
+def debug_port_up():
+    try:
+        with _no_proxy.open(f"http://127.0.0.1:{DEBUG_CHROME_PORT}/json/version", timeout=2) as r:
+            return "webSocketDebuggerUrl" in r.read().decode("utf-8", "replace")
+    except Exception:
+        return False
+
+
+def launch_debug_chrome():
+    """Open Chrome with BOTH --remote-debugging-port=9222 and --user-data-dir=<its own folder>."""
+    if debug_port_up():
+        return True, f"Debug Chrome is already running on port {DEBUG_CHROME_PORT}."
+    exe = CHROME_BIN
+    if not exe or not os.path.exists(exe):
+        return False, "Google Chrome isn't installed on this computer."
+    try:
+        os.makedirs(DEBUG_CHROME_DIR, exist_ok=True)
+        cmd = [exe, f"--remote-debugging-port={DEBUG_CHROME_PORT}", f"--user-data-dir={DEBUG_CHROME_DIR}",
+               "--no-first-run", "--no-default-browser-check"]
+        # Not tied to Guardian Monitor: closing the app leaves this Chrome open.
+        subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         close_fds=True, **({"creationflags": 0x00000200} if os.name == "nt"
+                                            else {"start_new_session": True}))
+    except Exception as e:
+        return False, f"Couldn't start Chrome ({e})."
+    for _ in range(40):
+        if debug_port_up():
+            log(f"Debug Chrome is open on port {DEBUG_CHROME_PORT} ({DEBUG_CHROME_DIR}).")
+            return True, (f"Chrome is open with debugging on port {DEBUG_CHROME_PORT}.\n"
+                          f"Profile folder: {DEBUG_CHROME_DIR}")
+        time.sleep(0.5)
+    return False, (f"Chrome opened, but port {DEBUG_CHROME_PORT} isn't answering. If a Chrome window using "
+                   f"{DEBUG_CHROME_DIR} was already open, close it and tap again.")
+
+
+def debug_chrome_ping():
+    """Send the Launch debug Chrome button to your phone, one time only."""
+    time.sleep(15)
+    s = load_settings()
+    if not s["ntfy_topic"] or s.get("debug_btn_v1"):
+        return
+    try:
+        body = {"topic": s["ntfy_topic"], "title": "🧪 Debug Chrome (temporary)",
+                "message": (f"Tap Launch to open Chrome with --remote-debugging-port={DEBUG_CHROME_PORT} and "
+                            f"--user-data-dir=\"{DEBUG_CHROME_DIR}\" (Chrome 136+ needs its own profile folder "
+                            f"for the debugger). You can also send \"debugchrome\" any time."),
+                "priority": 3,
+                "actions": [{"action": "http", "label": "Launch debug Chrome", "url": f"{NTFY_BASE}/{cmd_topic(s)}",
+                             "method": "POST", "body": "debugchrome", "clear": False},
+                            {"action": "http", "label": "Status", "url": f"{NTFY_BASE}/{cmd_topic(s)}",
+                             "method": "POST", "body": "status", "clear": False}]}
+        req = urllib.request.Request(f"{NTFY_BASE}/", data=json.dumps(body).encode("utf-8"),
+                                     headers={"Content-Type": "application/json"})
+        fetch(req, timeout=10)
+        with settings_lock:
+            fresh = load_settings()
+            fresh["debug_btn_v1"] = True
+            save_settings(fresh)
+        log("Sent the Launch debug Chrome button to your phone.")
+    except Exception as e:
+        log(f"Couldn't send the debug Chrome button: {e}")
+
+
 def update_loop():
     time.sleep(20)
     while True:
@@ -6401,6 +6479,7 @@ def main():
     apply_roles()
     threading.Thread(target=health_loop, daemon=True).start()
     threading.Thread(target=phone_control_loop, daemon=True).start()
+    threading.Thread(target=debug_chrome_ping, daemon=True).start()
     for n in checkers:
         threading.Thread(target=checker_loop, args=(n,), daemon=True).start()
     write_window_key()

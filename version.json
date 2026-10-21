@@ -1,11 +1,11 @@
 {
-  "version": "5.3",
-  "notes": "5.3: Catches Pok\u00e9mon Center's Imperva 'Additional security check' (hCaptcha 'I am human') page and pings you right away to solve it. Checks you're still signed in every 15 minutes (not just once), using the page's own Sign In / Sign Out links, and pings you (or signs you in, if turned on) when you're signed out.",
+  "version": "5.4",
+  "notes": "5.4: Temporary: sends your phone a one-time \"Launch debug Chrome\" button. Tapping it (or sending \"debugchrome\") opens Chrome with --remote-debugging-port=9222 and its own profile folder (--user-data-dir=C:\\QueueWatcher\\checker-chrome-pkc), since Chrome 136+ ignores the debugging port on the default profile.",
   "files": {
     "mac": {
-      "Resources/watcher_app.py": "e5e2eafada1a024f22d3a26c31db87d7685e764c43d132ea0b55ea7e7815eabd",
+      "Resources/watcher_app.py": "3128e981b12c7f71d6b8e1ed962c34d32e4165d7bb95d24e9fbf626bd4360daf",
       "Resources/panel.js": "1ca5a1d6d0fd91e7526c6be3c75955b16928013fb0243bde1f4cdd37b7fa6e40",
-      "Resources/app_version": "bd6dcf46a2af86588ea28f979a921076e7f1b0eb696b6b679fc08bbb845e2389",
+      "Resources/app_version": "a520f016494c9248ad56f69ca564f9fb491ecf6f326651d6cb5d895f929ef569",
       "Resources/panel_version": "022804d19c8fe566dc00dca4721c1eadf6ed71164d647a2e77493ac87c4fe3a6",
       "Resources/AppIcon.icns": "6b37b4479b291aba49e8a189be4dfdfef8727216e8a1fd48b2ff0b22956bdb5c",
       "Resources/guardian_avatar.png": "f1f0d53666d79a1c9e0d788861d6fa47e09b3d4f5fc6bcd2eb388990563c7ad6",
@@ -13,10 +13,10 @@
       "Info.plist": "f0f40eef20cd9b84b4c4d6ac16b2e2da5653d35c549f33555878a0771ce7beaa"
     },
     "windows": {
-      "watcher_app.py": "7f9052753b53db12064b32a61e7e33dcf2b3bdbc47c81694333af01a2bc2471c",
-      "winplat.py": "effae7f6c69c43caa7823c8a20725ecd25c45811c3f6938fd7ac61f6002156ce",
+      "watcher_app.py": "ba68cfcfa2c6a40b2609ba066e3f01ff616b704d92effe332a4f5496662faadf",
+      "winplat.py": "60dc07262fc7410c8b319f98061934792716de2ddd93c611da31a2aacde1113d",
       "launcher.pyw": "8e8fc021d3aaad76e3cc9a864e401095882c5f7ceedee8bd185d4200af4f4039",
-      "app_version": "bd6dcf46a2af86588ea28f979a921076e7f1b0eb696b6b679fc08bbb845e2389",
+      "app_version": "a520f016494c9248ad56f69ca564f9fb491ecf6f326651d6cb5d895f929ef569",
       "QueueWatcher.ico": "e7595b3aaedf2f63af463c789f9867448880ce238fc94752a746204b15954557",
       "guardian_avatar.png": "f1f0d53666d79a1c9e0d788861d6fa47e09b3d4f5fc6bcd2eb388990563c7ad6"
     }
