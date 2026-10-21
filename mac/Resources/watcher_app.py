@@ -86,7 +86,7 @@ DEFAULTS = {
     "target_every": 5,
     "target_open_page": True,
     "target_mention": "same",          # same | none | here | everyone
-    "discord_target_msg": "\U0001F3AF **Target restock:** {item} for {price}\n{link}",
+    "discord_target_msg": "\U0001F3AF **Target restock**\n**{item}**\n{price}\n{link}",
     "checker_invisible": True,
     "walmart_enabled": False,
     "walmart_every": 20,
@@ -96,7 +96,7 @@ DEFAULTS = {
     "walmart_watch": "",
     "walmart_open_page": True,
     "walmart_mention": "same",
-    "discord_walmart_msg": "\U0001F6D2 **Walmart restock:** {item} for {price}\n{link}",
+    "discord_walmart_msg": "\U0001F6D2 **Walmart restock**\n**{item}**\n{price}\n{link}",
     # Best Buy restocks (works like Target)
     "bestbuy_enabled": False,
     "bestbuy_watch": "",
@@ -104,7 +104,7 @@ DEFAULTS = {
     "bestbuy_every": 5,
     "bestbuy_open_page": True,
     "bestbuy_mention": "same",         # same | none | here | everyone
-    "discord_bestbuy_msg": "\U0001F7E6 **Best Buy restock:** {item} for {price}\n{link}",
+    "discord_bestbuy_msg": "\U0001F7E6 **Best Buy restock**\n**{item}**\n{price}\n{link}",
     "bestbuy_v1": False,
     "bestbuy_test_done": False,      # the one-time "Best Buy checker works" test post
     "msrp_limits": "",               # Target's own prices
@@ -125,6 +125,9 @@ DEFAULTS = {
                            "A drop may be starting soon. {link}",
 }
 OLD_DEFAULTS = {
+    "discord_target_msg": ["\U0001F3AF **Target restock:** {item} for {price}\n{link}"],
+    "discord_bestbuy_msg": ["\U0001F7E6 **Best Buy restock:** {item} for {price}\n{link}"],
+    "discord_walmart_msg": ["\U0001F6D2 **Walmart restock:** {item} for {price}\n{link}"],
     "news_feeds": ["PokeBeach | https://www.pokebeach.com/feed\n"
                    "Pok\u00e9Jungle | https://pokejungle.net/feed/",
                    "PokeBeach | https://www.pokebeach.com/feed\n"
@@ -491,27 +494,123 @@ def webhook_for(s, channel=None):
     return s["discord_webhook"]
 
 
-def notify_discord(s, msg, mention=True, force=False, channel=None):
-    """Server-friendly message: your wording, your bot name, and an optional @."""
-    hook = webhook_for(s, channel)
-    if not hook or not (s["discord_enabled"] or force):
-        return
-    tag, allowed = discord_mention(s) if mention else ("", {"parse": []})
-    payload = {"content": tag + msg, "allowed_mentions": allowed}
+import re as _re
+_LINK_RX = _re.compile(r"<(https?://[^>\s]+)>|(?<![(\[])(https?://\S+)")
+
+
+def alert_color(text):
+    t = text.lower()
+    if "test" in t:
+        return 0xF1C40F
+    if any(w in t for w in ("drawing", "raffle", "lottery", "invite")):
+        return 0x9B59B6
+    if "restock" in t or "in stock" in t:
+        return 0x2ECC71
+    if "queue" in t:
+        return 0xE74C3C
+    if "heads up" in t or "paused" in t:
+        return 0xE67E22
+    return 0x3498DB
+
+
+def text_to_embed(msg, image=None):
+    """Turn an alert's text into a clean Discord card: bold header -> title, link -> clickable title, picture."""
+    lines = [l.rstrip() for l in msg.strip().splitlines()]
+    test = bool(lines and _re.match(r"\W*\**\s*\**TEST\b", lines[0].replace("*", ""), _re.I) and len(lines) > 1)
+    if test:
+        lines = lines[1:]
+    links = [a or b for a, b in _LINK_RX.findall("\n".join(lines))]
+    body = [_LINK_RX.sub("", l).strip(" \t-·:") for l in lines]
+    body = [l for l in body if l]
+    title = ""
+    if body:
+        m = _re.match(r"^(\W*?)\s*\*\*(.+?)\*\*\s*:?\s*(.*)$", body[0])
+        if m:
+            title = f"{m.group(1).strip()} {m.group(2).strip().rstrip(':')}".strip()
+            rest = m.group(3).strip(" :")
+            body = ([rest] if rest else []) + body[1:]
+        else:
+            title, body = body[0], body[1:]
+    e = {"title": (("\U0001F9EA TEST · " if test else "") + title)[:250], "color": alert_color(("test " if test else "") + title),
+         "footer": {"text": "Guardian Monitor"},
+         "timestamp": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")}
+    if body:
+        e["description"] = "\n".join(body)[:3500]
+    if links:
+        e["url"] = links[0]
+    if image and str(image).startswith("http"):
+        e["thumbnail"] = {"url": image}
+    return e
+
+
+def _post_discord(s, hook, payload):
     if s["discord_name"] and not bad_discord_name(s["discord_name"]):
         payload["username"] = s["discord_name"]
     if hook != s["discord_webhook"]:      # extra channels get the logo without a separate setup step
         payload["avatar_url"] = BOT_PIC
-    try:
-        req = urllib.request.Request(
-            hook,
-            data=json.dumps(payload).encode("utf-8"),
-            headers={"Content-Type": "application/json", "User-Agent": "QueueWatcher/1.0"},
-        )
-        fetch(req, timeout=10)
-        log("Discord ping sent.")
-    except Exception as e:
-        log(f"Discord ping failed: {e}")
+    for attempt in range(3):
+        try:
+            req = urllib.request.Request(hook, data=json.dumps(payload).encode("utf-8"),
+                                         headers={"Content-Type": "application/json", "User-Agent": "QueueWatcher/1.0"})
+            fetch(req, timeout=10)
+            log("Discord ping sent.")
+            return
+        except urllib.error.HTTPError as e:
+            if e.code == 429 and attempt < 2:
+                time.sleep(float(e.headers.get("Retry-After", "2")) + 0.5)
+                continue
+            log(f"Discord ping failed: {e}")
+            return
+        except Exception as e:
+            log(f"Discord ping failed: {e}")
+            return
+
+
+_discord_batches, _discord_batch_lock = {}, threading.Lock()
+BATCH_WAIT = 5        # seconds: alerts of the same kind that land together go out as ONE message with ONE ping
+
+
+def _flush_discord(key):
+    with _discord_batch_lock:
+        b = _discord_batches.pop(key, None)
+    if not b:
+        return
+    hook, kind = key
+    embeds = b["embeds"]
+    for i in range(0, len(embeds), 10):                  # Discord allows 10 cards per message
+        first = i == 0
+        head = ""
+        if first:
+            head = b["tag"]
+            if len(embeds) > 1:
+                head += f"**{len(embeds)} × {kind.rstrip('!')}**"
+        payload = {"content": head, "embeds": embeds[i:i + 10],
+                   "allowed_mentions": b["allowed"] if first else {"parse": []}}
+        _post_discord(b["s"], hook, payload)
+        time.sleep(1)
+
+
+def notify_discord(s, msg, mention=True, force=False, channel=None, image=None, kind=None):
+    """A clean card in your server, with an optional @. Same-kind alerts within a few seconds share one ping."""
+    hook = webhook_for(s, channel)
+    if not hook or not (s["discord_enabled"] or force):
+        return
+    tag, allowed = discord_mention(s) if mention else ("", {"parse": []})
+    tag = tag.strip()
+    tag = tag + " " if tag else ""
+    e = text_to_embed(msg, image)
+    if not kind:
+        _post_discord(s, hook, {"content": tag, "embeds": [e], "allowed_mentions": allowed})
+        return
+    key = (hook, kind)
+    with _discord_batch_lock:
+        b = _discord_batches.get(key)
+        if not b:
+            b = _discord_batches[key] = {"embeds": [], "tag": tag, "allowed": allowed, "s": s}
+            threading.Timer(BATCH_WAIT, _flush_discord, (key,)).start()
+        elif tag and not b["tag"]:
+            b["tag"], b["allowed"] = tag, allowed
+        b["embeds"].append(e)
 
 
 def with_role(s, key):
@@ -615,7 +714,7 @@ def to_eastern(text):
     return TIME_ZONE_RX.sub(fix, text)
 
 
-def send_all(s, title, msg, discord_msg=None, discord_mention_on=True, ack_button=False, channel=None):
+def send_all(s, title, msg, discord_msg=None, discord_mention_on=True, ack_button=False, channel=None, image=None):
     """Phone + Mac get the personal message. Discord only gets discord_msg (if given),
     so the server sees clean, general alerts and none of your personal status pings."""
     title, msg = to_eastern(title), to_eastern(msg)
@@ -623,7 +722,7 @@ def send_all(s, title, msg, discord_msg=None, discord_mention_on=True, ack_butto
     notify_phone(s, title, msg, ack_button)
     if discord_msg:
         if channel:
-            notify_discord(s, discord_msg, discord_mention_on, channel=channel)
+            notify_discord(s, discord_msg, discord_mention_on, channel=channel, image=image, kind=title)
         else:
             notify_discord(s, discord_msg, discord_mention_on)
     notify_mac(msg)
@@ -2543,7 +2642,7 @@ NOT_RETAIL = _re.compile(r"\b(japanese|japan|korean|chinese|thai|import(?:ed)?|r
 READ_JS = (
     "(function(){"
     "var o={url:location.href,title:document.title,text:(document.body?document.body.innerText:'').slice(0,15000),"
-    "ld:[],buttons:[],cards:[]};"
+    "ld:[],buttons:[],cards:[],og:((document.querySelector('meta[property=\"og:image\"]')||{}).content||'')};"
     "var ss=document.querySelectorAll('script[type=\"application/ld+json\"]');"
     "for(var i=0;i<ss.length;i++){try{o.ld.push(JSON.parse(ss[i].textContent))}catch(e){}}"
     "var bs=document.querySelectorAll('button,[role=button],input[type=submit]');"
@@ -2562,7 +2661,7 @@ READ_JS = (
     "if(name.length<6){var h=el.querySelector('h2,h3,[data-test*=title],[class*=title]');"
     "if(h)name=(h.innerText||'').trim().split('\\n')[0];}"
     "if(name.length<6)continue;"
-    "seen[id]=1;o.cards.push({href:a.href.split('#')[0],name:name.slice(0,200),text:(el.innerText||'').trim().slice(0,900)});}"
+    "seen[id]=1;o.cards.push({href:a.href.split('#')[0],name:name.slice(0,200),text:(el.innerText||'').trim().slice(0,900),img:((el.querySelector('img')||{}).src||'')});}"
     "return JSON.stringify(o);})()"
 )
 
@@ -2954,6 +3053,7 @@ def parse_walmart(d, s):
         price = store_price(t)
         limit = msrp_limit(c["name"], s, "walmart")
         out.append({"name": c["name"][:160], "url": c.get("href") or WALMART_DRAW, "price": price, "limit": limit,
+                    "image": c.get("img") if str(c.get("img", "")).startswith("http") else None,
                     "status": status, "when": to_eastern(when)[:60],
                     "msrp_ok": limit is not None and not NOT_RETAIL.search(c["name"])
                                and (price is None or price <= limit + allowance_for(limit, s) + ROUNDING)})
@@ -3140,7 +3240,8 @@ def shop_alert(s, it, name, test=False):
     ss = dict(s, discord_mention=who) if who in ("here", "everyone") else with_role(s, f"discord_role_{name}")
     send_all(ss, f"TEST: {site} alert" if test else f"{site} restock!",
              ("TEST: " if test else "") + f"{it['name']} is in stock at {site} for {price}.",
-             shop_discord(s, it, name, test), discord_mention_on=(not test and who != "none"), channel=name)
+             shop_discord(s, it, name, test), discord_mention_on=(not test and who != "none"), channel=name,
+             image=it.get("image"))
 
 
 def target_discord(s, it, test=False):
@@ -3191,8 +3292,8 @@ def shop_soon_alert(s, it, name):
     site = SITE_NAMES[name]
     price = f" ({money_str(it.get('price'))})" if it.get("price") is not None else ""
     send_all(with_role(s, f"discord_role_{name}"), f"{site} drawing coming up", f"{it['name']}{price}. Coming up soon.",
-             f"\U0001F39F\uFE0F **{site} drawing/invite coming up:** {it['name']}{price}. "
-             f"You'll get another ping when it opens.\n<{it['url']}>", channel=name)
+             f"\U0001F39F\uFE0F **{site} drawing coming up**\n**{it['name']}**\n{money_str(it.get('price')) or ''}\n<{it['url']}>",
+             channel=name, image=it.get("image"))
 
 
 def shop_invite_alert(s, it, name):
@@ -3202,9 +3303,10 @@ def shop_invite_alert(s, it, name):
     price = f" ({money_str(it.get('price'))})" if it.get("price") is not None else ""
     who = s[f"{name}_mention"]
     ss = dict(s, discord_mention=who) if who in ("here", "everyone") else with_role(s, f"discord_role_{name}")
-    send_all(ss, f"{site} invite is OPEN", f"{ask} now: {it['name']}{price}. {after}".strip(),
-             f"\U0001F39F\uFE0F **{site} invite open:** {it['name']}{price}. {ask} for a chance to buy.\n<{it['url']}>",
-             discord_mention_on=(who != "none"), channel=name)
+    send_all(ss, f"{site} drawing open", f"{ask} now: {it['name']}{price}. {after}".strip(),
+             f"\U0001F39F\uFE0F **{site} drawing open**\n**{it['name']}**\n"
+             f"{' · '.join(x for x in (money_str(it.get('price')), ask + ' now') if x)}\n<{it['url']}>",
+             discord_mention_on=(who != "none"), channel=name, image=it.get("image"))
 
 
 def bestbuy_invite_alert(s, it):
@@ -3308,8 +3410,22 @@ SHOPS = {"target": {"search": TARGET_SEARCH, "product": parse_target_product, "s
                      "alert": walmart_alert, "own": "Walmart's own price"}}
 
 
+def page_image(d):
+    for o in walk_ld(d.get("ld", [])):
+        if str(o.get("@type", "")).lower() == "product":
+            img = o.get("image")
+            img = img[0] if isinstance(img, list) and img else img
+            img = img.get("url") if isinstance(img, dict) else img
+            if isinstance(img, str) and img.startswith("http"):
+                return img
+    og = d.get("og") or ""
+    return og if og.startswith("http") else None
+
+
 def mark_chance(it, d):
     """Any store page with a drawing / raffle / lottery / invite for a Pokémon card product, whatever the price."""
+    if not it.get("image"):
+        it["image"] = page_image(d)
     if it.get("status") in ("third", "notretail") or not is_tcg(it.get("name", "")):
         return it
     main = BB_OTHER.split(OTHER_PRODUCTS.split(d.get("text", ""), 1)[0], 1)[0]
@@ -3463,16 +3579,17 @@ def _run_walmart(s):
         price = f"${it['price']:.2f}" if it["price"] is not None else ""
         if it["status"] == "open":
             log(f"Walmart drawing open: {it['name']}")
-            send_all(with_role(s, "discord_role_walmart"), "Walmart drawing is OPEN", f"Enter now: {it['name']} {price}. {it['when']}".strip(),
-                     f"\U0001F39F️ **Walmart drawing open:** {it['name']} {price} ({it['when']})\n<{WALMART_DRAW}>",
-                     channel="walmart")
+            send_all(with_role(s, "discord_role_walmart"), "Walmart drawing open", f"Enter now: {it['name']} {price}. {it['when']}".strip(),
+                     f"\U0001F39F️ **Walmart drawing open**\n**{it['name']}**\n"
+                     f"{' · '.join(x for x in (price, it['when'], 'Enter now') if x)}\n<{it['url']}>",
+                     channel="walmart", image=it.get("image"))
         else:
             log(f"Walmart drawing coming up: {it['name']}")
             send_all(with_role(s, "discord_role_walmart"), "Walmart drawing coming up",
                      f"{it['name']} {price}. {it['when']}".strip(),
-                     f"\U0001F39F️ **Walmart drawing coming up:** {it['name']} {price} ({it['when']}). "
-                     f"You'll get another ping when it opens.\n<{WALMART_DRAW}>",
-                     channel="walmart")
+                     f"\U0001F39F️ **Walmart drawing coming up**\n**{it['name']}**\n"
+                     f"{' · '.join(x for x in (price, it['when']) if x)}\n<{it['url']}>",
+                     channel="walmart", image=it.get("image"))
     save_walmart_seen(seen)
     c["items"] = items
     live = [x for x in items if x["status"] in ("open", "upcoming")]

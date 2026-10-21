@@ -201,11 +201,11 @@ def test_post(products, hook=None):
     print(f"Test post sent using: {pick['title']} ({len(products)} products read from the live site).")
 
 
-def alert_payload(embeds, role=None):
+def alert_payload(embeds, role=None, total=None):
     role = ROLE if role is None else role
     out = {"username": BOT_NAME, "avatar_url": BOT_PIC, "embeds": embeds, "allowed_mentions": {"parse": []}}
     if role:                                       # ping a role only once one is set up
-        out["content"] = f"<@&{role}>"
+        out["content"] = f"<@&{role}>" + (f" **{total} new at Gator's**" if total and total > 1 else "")
         out["allowed_mentions"] = {"roles": [role]}
     return out
 
@@ -304,10 +304,10 @@ def main():
               + (f" and {len(singles)} singles" if singles else "")
               + ". Nothing new since the last check. It keeps checking every few minutes.")
     for i in range(0, len(sealed_embeds), 10):          # Discord allows 10 embeds per message
-        post(alert_payload(sealed_embeds[i:i + 10]))
+        post(alert_payload(sealed_embeds[i:i + 10], None if i == 0 else "", len(sealed_embeds)))   # one ping per check
         time.sleep(1)
     for i in range(0, len(single_embeds), 10):         # one ping per check, not one per batch of cards
-        post(alert_payload(single_embeds[i:i + 10], SINGLES_ROLE if i == 0 else ""), s_hook)
+        post(alert_payload(single_embeds[i:i + 10], SINGLES_ROLE if i == 0 else "", len(single_embeds)), s_hook)
         time.sleep(1)
     if len(single_found) > MAX_CARDS:
         post({"username": BOT_NAME, "avatar_url": BOT_PIC,

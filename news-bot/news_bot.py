@@ -240,9 +240,11 @@ def main():
         titles.add(key)
         out.append(x)
     out = out[-MAX_POSTS:]
-    for x in out:
-        post(payload([embed(x)], ping=not unconfirmed(x)))
-        time.sleep(1.2)
+    # One message (and one ping) for confirmed news, one quiet message for rumors.
+    for group, ping in (([x for x in out if not unconfirmed(x)], True), ([x for x in out if unconfirmed(x)], False)):
+        if group:
+            post(payload([embed(x) for x in group], ping=ping))
+            time.sleep(1.2)
     seen.update(x["id"] for x in stories)
     with open(STATE_FILE, "w") as f:
         json.dump({"seen": list(seen)[-800:]}, f)

@@ -1,11 +1,11 @@
 {
-  "version": "4.9",
-  "notes": "4.9: Drawings, raffles, lotteries and invites are caught at every store (Walmart, Target, Best Buy) with one shared set of words. Walmart drawings now alert for every Pok\u00e9mon card product, whatever the price. All times in alerts are converted to Eastern.",
+  "version": "5.0",
+  "notes": "5.0: Cleaner Discord alerts - each one is a tidy card with the product picture and a clickable title, and alerts of the same kind that land together go out as one message with one ping. A different kind of alert (like a queue vs. a restock) still pings on its own.",
   "files": {
     "mac": {
-      "Resources/watcher_app.py": "5ae6411cee9360636066e57e04c12a1518bffebfcd29f1b880c122b3a351f1b1",
+      "Resources/watcher_app.py": "c8029364bb1e9884a0b9799f5223d045d9bb73d14b7c9c97b1112c098808e983",
       "Resources/panel.js": "1ca5a1d6d0fd91e7526c6be3c75955b16928013fb0243bde1f4cdd37b7fa6e40",
-      "Resources/app_version": "2e5d3cf3acb0a8d0cc0e152cde65449f85111c01edb6c7cd6a3cbf9ea06aea9d",
+      "Resources/app_version": "e09be1d5329b21e0d48ccf64d5617f1dd0a511da244b9cb28b5b469a8cb52bec",
       "Resources/panel_version": "022804d19c8fe566dc00dca4721c1eadf6ed71164d647a2e77493ac87c4fe3a6",
       "Resources/AppIcon.icns": "6b37b4479b291aba49e8a189be4dfdfef8727216e8a1fd48b2ff0b22956bdb5c",
       "Resources/guardian_avatar.png": "f1f0d53666d79a1c9e0d788861d6fa47e09b3d4f5fc6bcd2eb388990563c7ad6",
@@ -13,10 +13,10 @@
       "Info.plist": "0240cd9a3a2cdebf2f8a458834d1faeb392658b93d61346d7363b9c14438816e"
     },
     "windows": {
-      "watcher_app.py": "741c6c4e02079697a844044c3c7a663e10c4ceae0117ab3690fba5bd50812b0d",
+      "watcher_app.py": "03a938c3b3c4875da5e3857e35a4970d2d6861bc37e9a51fb917b6c4077cb9da",
       "winplat.py": "9a44879168a95d934a5f1325dc5ee6aa5fccaf180411523f30bee7455bdeb44a",
       "launcher.pyw": "8e8fc021d3aaad76e3cc9a864e401095882c5f7ceedee8bd185d4200af4f4039",
-      "app_version": "2e5d3cf3acb0a8d0cc0e152cde65449f85111c01edb6c7cd6a3cbf9ea06aea9d",
+      "app_version": "e09be1d5329b21e0d48ccf64d5617f1dd0a511da244b9cb28b5b469a8cb52bec",
       "QueueWatcher.ico": "e7595b3aaedf2f63af463c789f9867448880ce238fc94752a746204b15954557",
       "guardian_avatar.png": "f1f0d53666d79a1c9e0d788861d6fa47e09b3d4f5fc6bcd2eb388990563c7ad6"
     }
