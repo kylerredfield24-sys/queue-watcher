@@ -23,7 +23,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs
 
 PORT = 8765
-VERSION = "5.2"   # the launcher compares this, and replaces an older copy that's still running
+VERSION = "5.3"   # the launcher compares this, and replaces an older copy that's still running
 PLATFORM = "mac"  # the Windows version switches this to "windows"
 TOKEN = secrets.token_hex(16)
 PAGE_LOAD_WAIT = 8
@@ -984,9 +984,12 @@ PAGE_JS = (
     "try{var a=document.querySelectorAll('*');for(var j=0;j<a.length&&j<6000;j++){var r=a[j].shadowRoot;"
     "if(r)t+=' '+(r.textContent||'').slice(0,3000);}}catch(e){}"
     "t+=' '+(document.title||'');"
-    "try{var cs=document.querySelectorAll('iframe[src*=captcha],iframe[src*=hcaptcha],iframe[title*=challenge],"
-    "iframe[src*=challenges],#px-captcha,.h-captcha,[id*=captcha-container]');for(var k=0;k<cs.length;k++){"
-    "var b=cs[k].getBoundingClientRect();if(b.width>100&&b.height>=70){t+=' " + CAPTCHA_MARK + "';break;}}}catch(e){}"
+    "try{var sel='iframe[src*=captcha],iframe[src*=hcaptcha],iframe[title*=challenge],iframe[title*=hCaptcha],"
+    "iframe[src*=challenges],iframe[src*=Incapsula_Resource],#px-captcha,.h-captcha,[id*=captcha-container]';"
+    "var docs=[document];var fr=document.querySelectorAll('iframe');for(var q=0;q<fr.length;q++){try{if(fr[q].contentDocument)docs.push(fr[q].contentDocument);}catch(e){}}"
+    "var hit=false;for(var z=0;z<docs.length&&!hit;z++){var cs=docs[z].querySelectorAll(sel);for(var k=0;k<cs.length;k++){"
+    "var b=cs[k].getBoundingClientRect();if(b.width>100&&b.height>=70){hit=true;break;}}}"
+    "if(hit)t+=' " + CAPTCHA_MARK + "';}catch(e){}"
     "if(performance.getEntriesByType('resource').some(function(e){return e.name.indexOf('SWWRGTS') > -1;})"
     " || document.documentElement.innerHTML.indexOf('SWWRGTS') > -1){t+=' " + SCRIPT_MARK + "';}"
     "return t;})()"
@@ -1115,8 +1118,35 @@ def fill_login_js(user, password):
             "return 'nobutton';})()")
 
 
-def signed_in_state(text, s):
-    """'in', 'out', or 'unknown', based on your sign-in words."""
+# Looks at the page's links (including ones tucked in menus) for a sign-out link (= signed in)
+# or a sign-in link (= signed out). Returns "in|" / "out|<sign-in link>" / "unknown|".
+SIGNIN_JS = ("(function(){var a=document.querySelectorAll('a[href],button');var inn=false,out='';"
+             "for(var i=0;i<a.length;i++){var e=a[i],h=(e.getAttribute('href')||'').toLowerCase(),"
+             "t=(e.textContent||'').replace(/\\s+/g,' ').trim().toLowerCase();"
+             "if(/log-?out|sign-?out|logoff/.test(h)||/^(sign|log) ?out$/.test(t)){inn=true;break;}"
+             "if(!out&&(/\\/(account\\/)?(login|sign-?in)\\b/.test(h)||/^(sign|log) ?in( \\/ register| or create account)?$/.test(t))"
+             "&&e.offsetParent!==null)out=e.href||h||'x';}"
+             "return inn?'in|':(out?'out|'+out:'unknown|');})()")
+
+
+def page_sign_in(win):
+    """('in'|'out'|'unknown', sign-in link) read straight from the page's links."""
+    try:
+        out, err = run_js(win, SIGNIN_JS)
+        if err or not out or "|" not in out:
+            return "unknown", ""
+        state, link = out.split("|", 1)
+        return state, link if link.startswith("http") else ""
+    except Exception:
+        return "unknown", ""
+
+
+def signed_in_state(text, s, win=None):
+    """'in', 'out', or 'unknown': the page's own sign-in/out links first, then your sign-in words."""
+    if win is not None:
+        state, _ = page_sign_in(win)
+        if state != "unknown":
+            return state
     blob = normalize(text)
     if find_word(blob, split_words(s["signed_in_words"])):
         return "in"
@@ -1125,8 +1155,10 @@ def signed_in_state(text, s):
     return "unknown"
 
 
-def try_sign_in(win, s, stop):
+def try_sign_in(win, s, stop, link=""):
     """Go to the sign-in page, fill it from the Keychain, then come back. Returns a short result."""
+    if not s["login_url"] and link:
+        s["login_url"] = link                   # use the site's own Sign In link
     if not s["login_url"]:
         return "no sign-in page set"
     password = kc_load(s["watch_url"], s["login_user"])
@@ -1185,16 +1217,29 @@ def wait_for_you(win, s, stop):
     return "the captcha wasn't finished in time"
 
 
+SIGNIN_EVERY = 15 * 60          # re-check you're signed in this often (sign-ins expire mid-run)
+SIGNIN_PING_EVERY = 45 * 60     # "Sign in needed" pings at most this often
+_signin = {"pinged": 0}
+
+
 def check_sign_in(win, s, text, stop):
-    """Once per run: if you look signed out, sign in (if set up) or ping you."""
-    if not s["check_signed_in"] or signed_in_state(text, s) != "out":
+    """Every ~15 minutes: if you look signed out, sign in (if set up) or ping you."""
+    if not s["check_signed_in"]:
+        return
+    state, link = page_sign_in(win)
+    if state == "unknown":
+        state = signed_in_state(text, s)
+    if state != "out":
         return
     host = site_host(s["watch_url"])
+    log(f"Signed out of {host}.")
+    if time.time() - _signin["pinged"] < SIGNIN_PING_EVERY and not s["auto_login"]:
+        return
     if s["auto_login"] and s["login_user"]:
-        result = try_sign_in(win, s, stop)
+        result = try_sign_in(win, s, stop, link)
         if result == "done":
             _, _, text2, _, _ = read_page(win)
-            if signed_in_state(text2, s) != "out":
+            if signed_in_state(text2, s, win) != "out":
                 log(f"Signed in to {host}.")
                 notify_mac(f"Signed you in to {host}.")
                 return
@@ -1203,11 +1248,16 @@ def check_sign_in(win, s, text, stop):
         if result != "still looks signed out afterwards":
             go_to(win, s["watch_url"])             # don't leave the tab sitting on the sign-in page
             wait_for_load(win, stop)
-        send_all(s, "Sign in needed", f"Couldn't sign you in to {host} ({result}). "
+        if time.time() - _signin["pinged"] < SIGNIN_PING_EVERY:
+            return
+        _signin["pinged"] = time.time()
+        bring_to_front(win)
+        send_all(s, "\U0001F511 Sign in needed", f"Couldn't sign you in to {host} ({result}). "
                  "Please sign in in the Chrome window before the drop. Still watching.")
     else:
-        log(f"Looks signed out of {host}.")
-        send_all(s, "Sign in needed", f"You look signed out of {host}. "
+        _signin["pinged"] = time.time()
+        bring_to_front(win)
+        send_all(s, "\U0001F511 Sign in needed", f"You're signed out of {host}. "
                  "Sign in in the Chrome window before the drop. Still watching.")
 
 
@@ -1402,7 +1452,8 @@ def mins(sec):
     return f"{m} minute" + ("" if m == 1 else "s")
 
 
-CAPTCHA_RX = _re.compile(r"(?:solve|complete) the (?:captcha|puzzle)|are you a robot|robot or human|press (?:&|and) hold|verify (?:that )?(?:you are|you're) "
+CAPTCHA_RX = _re.compile(r"(?:solve|complete) the (?:captcha|puzzle)|are you a robot|additional security check|"
+                        r"security check is required|\bi am human\b|protected and accelerated by imperva|incapsula|robot or human|press (?:&|and) hold|verify (?:that )?(?:you are|you're) "
                         r"(?:a )?human|not a robot|human verification|pardon our interruption", _re.I)
 CAPTCHA_WAIT = 10 * 60          # how long it holds the tab for you to solve it
 _last_captcha_ping = {"t": 0}
@@ -1628,8 +1679,8 @@ def watch(s, stop):
                     log(f"Check #{checks}: no queue.")
                     if checks % 10 == 1 or len(text or "") < 300:
                         log(f'  (read {len(text or "")} characters, tab "{(title or url or "no title")[:50]}")')
-                if not login_checked and not text_blocked:
-                    login_checked = True
+                if not text_blocked and time.time() - (login_checked or 0) > SIGNIN_EVERY:
+                    login_checked = time.time()
                     check_sign_in(win, s, text, stop)
 
             wait = int(random.randint(s["min_wait"], s["max_wait"]) * (2 if health["level"] in ("warm", "hot") else 1)
@@ -2638,7 +2689,8 @@ CHECKER_BLOCK = _re.compile(r"robot or human|press (?:&|and) hold|verify (?:that
                             r"enter the characters you see|make sure you'?re not a robot|to discuss automated access|"
                             r"click the button below to continue shopping|"
                             r"access denied|unusual (?:activity|traffic)|are you a robot|pardon our interruption|"
-                            r"request unsuccessful", _re.I)
+                            r"request unsuccessful|additional security check|security check is required|"
+                            r"protected and accelerated by imperva", _re.I)
 POKEMON = _re.compile(r"pok[eé]mon", _re.I)
 # Anything that's a chance-to-buy: drawings, raffles, lotteries, invites, sweepstakes, entry windows.
 CHANCE = r"(?:drawings?|draws?|raffles?|lotter(?:y|ies)|invites?|invitations?|sweepstakes?|sweeps|entr(?:y|ies))"
