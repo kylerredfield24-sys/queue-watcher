@@ -23,7 +23,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs
 
 PORT = 8765
-VERSION = "5.4"   # the launcher compares this, and replaces an older copy that's still running
+VERSION = "5.5"   # the launcher compares this, and replaces an older copy that's still running
 PLATFORM = "mac"  # the Windows version switches this to "windows"
 TOKEN = secrets.token_hex(16)
 PAGE_LOAD_WAIT = 8
@@ -52,7 +52,7 @@ DEFAULTS = {
     "roles_v3": False,
     "roles_v4": False,
     "brand_v2": False,
-    "debug_btn_v1": False,           # temporary debug Chrome button already sent
+    "debug_btn_v2": False,           # temporary debug Chrome button already sent
     "update_pinged": "",             # newest version your phone was already told about
     "discord_user_id": "",          # user ID or role ID, used with "user"/"role" below
     "discord_mention": "user",       # none | here | everyone | role | user
@@ -331,7 +331,7 @@ def clean_settings(new):
     s["roles_v3"] = s.get("roles_v3") in (True, "true", 1, "1")
     s["roles_v4"] = s.get("roles_v4") in (True, "true", 1, "1")
     s["brand_v2"] = s.get("brand_v2") in (True, "true", 1, "1")
-    s["debug_btn_v1"] = s.get("debug_btn_v1") in (True, "true", 1, "1")
+    s["debug_btn_v2"] = s.get("debug_btn_v2") in (True, "true", 1, "1")
     s["update_pinged"] = str(s.get("update_pinged", ""))[:20]
     for key in ("discord_webhook", "discord_webhook_target", "discord_webhook_walmart", "discord_webhook_bestbuy"):
         u = str(s.get(key, "")).strip()
@@ -5884,8 +5884,7 @@ def phone_command(s, text):
             return phone_reply(s, "⚠️ Update didn't install", msg)
         return True
     if word in ("debugchrome", "debug chrome", "chrome debug", "debug"):
-        ok, msg = launch_debug_chrome()
-        return phone_reply(s, "🧪 Debug Chrome is open" if ok else "⚠️ Debug Chrome didn't start", msg)
+        return debug_button(s)
     return phone_reply(s, "Guardian Monitor", "Use the buttons, or send start, stop, status, log or update. "
                        "Store checkers: bestbuy on/off, target on/off, walmart on/off. "
                        "Tests: test target, test bestbuy, test walmart, test pkc, test all.")
@@ -6260,42 +6259,128 @@ def debug_port_up():
         return False
 
 
+DEBUG_PACKAGES = ("websockets", "aiohttp")
+
+
+def _python_exe():
+    """The python.exe Guardian Monitor runs on (not pythonw.exe, so pip works normally)."""
+    py = sys.executable
+    if py.lower().endswith("pythonw.exe"):
+        cand = py[:-11] + "python.exe"
+        py = cand if os.path.exists(cand) else py
+    return py
+
+
+def _hidden():
+    return {"creationflags": 0x08000000} if os.name == "nt" else {}      # no black console window
+
+
+def _has_package(py, name):
+    try:
+        r = subprocess.run([py, "-c", f"import importlib.util,sys; sys.exit(0 if importlib.util.find_spec('{name}') else 1)"],
+                           capture_output=True, timeout=60, **_hidden())
+        return r.returncode == 0
+    except Exception:
+        return False
+
+
+def ensure_debug_packages():
+    """Check websockets and aiohttp; pip install whichever is missing. Returns lines for the phone."""
+    py = _python_exe()
+    lines, missing = [], []
+    for name in DEBUG_PACKAGES:
+        if _has_package(py, name):
+            lines.append(f"✅ {name}: already installed")
+        else:
+            missing.append(name)
+    if missing:
+        try:
+            r = subprocess.run([py, "-m", "pip", "install", "--upgrade", *missing], capture_output=True, text=True,
+                               timeout=600, **_hidden())
+            err = (r.stderr or r.stdout or "").strip().splitlines()
+            err = err[-1][:150] if err else ""
+        except Exception as e:
+            err = str(e)[:150]
+        for name in missing:
+            if _has_package(py, name):
+                lines.append(f"📦 {name}: installed just now")
+                log(f"Installed {name} with pip.")
+            else:
+                lines.append(f"❌ {name}: pip install failed{(' (' + err + ')') if err else ''}")
+                log(f"pip install {name} failed: {err}")
+    return lines
+
+
+def _stop_debug_chrome():
+    """Close any Chrome that's using the debug profile folder (but not the hidden page readers)."""
+    try:
+        if os.name == "nt":
+            folder = DEBUG_CHROME_DIR.replace("'", "''")
+            ps = ("Get-CimInstance Win32_Process -Filter \"Name='chrome.exe'\" | Where-Object { "
+                  f"$_.CommandLine -like '*{folder}*' -and $_.CommandLine -notlike '*--headless*' }} | "
+                  "ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }")
+            subprocess.run(["powershell.exe", "-NoProfile", "-Command", ps], capture_output=True, timeout=60,
+                           **_hidden())
+        else:
+            subprocess.run(["pkill", "-f", f"--user-data-dir={DEBUG_CHROME_DIR}"], capture_output=True, timeout=20)
+    except Exception:
+        pass
+    time.sleep(2)
+
+
 def launch_debug_chrome():
-    """Open Chrome with BOTH --remote-debugging-port=9222 and --user-data-dir=<its own folder>."""
+    """Open Chrome with BOTH --remote-debugging-port=9222 and --user-data-dir=<its own folder>.
+    If that Chrome is open but the port isn't answering, close it and start it again."""
     if debug_port_up():
-        return True, f"Debug Chrome is already running on port {DEBUG_CHROME_PORT}."
+        return True, f"🟢 Chrome: already running with debugging on port {DEBUG_CHROME_PORT} (left it as is)."
     exe = CHROME_BIN
     if not exe or not os.path.exists(exe):
-        return False, "Google Chrome isn't installed on this computer."
-    try:
-        os.makedirs(DEBUG_CHROME_DIR, exist_ok=True)
-        cmd = [exe, f"--remote-debugging-port={DEBUG_CHROME_PORT}", f"--user-data-dir={DEBUG_CHROME_DIR}",
-               "--no-first-run", "--no-default-browser-check"]
-        # Not tied to Guardian Monitor: closing the app leaves this Chrome open.
-        subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                         close_fds=True, **({"creationflags": 0x00000200} if os.name == "nt"
-                                            else {"start_new_session": True}))
-    except Exception as e:
-        return False, f"Couldn't start Chrome ({e})."
-    for _ in range(40):
-        if debug_port_up():
-            log(f"Debug Chrome is open on port {DEBUG_CHROME_PORT} ({DEBUG_CHROME_DIR}).")
-            return True, (f"Chrome is open with debugging on port {DEBUG_CHROME_PORT}.\n"
-                          f"Profile folder: {DEBUG_CHROME_DIR}")
-        time.sleep(0.5)
-    return False, (f"Chrome opened, but port {DEBUG_CHROME_PORT} isn't answering. If a Chrome window using "
-                   f"{DEBUG_CHROME_DIR} was already open, close it and tap again.")
+        return False, "❌ Chrome: Google Chrome isn't installed on this computer."
+    _stop_debug_chrome()        # a stuck copy using this folder would swallow the new launch
+    restarted = False
+    for attempt in range(2):
+        try:
+            os.makedirs(DEBUG_CHROME_DIR, exist_ok=True)
+            cmd = [exe, f"--remote-debugging-port={DEBUG_CHROME_PORT}", f"--user-data-dir={DEBUG_CHROME_DIR}",
+                   "--no-first-run", "--no-default-browser-check"]
+            # Not tied to Guardian Monitor: closing the app leaves this Chrome open.
+            subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                             close_fds=True, **({"creationflags": 0x00000200} if os.name == "nt"
+                                                else {"start_new_session": True}))
+        except Exception as e:
+            return False, f"❌ Chrome: couldn't start it ({e})."
+        for _ in range(40):
+            if debug_port_up():
+                verb = "restarted" if restarted else "started"
+                log(f"Debug Chrome {verb} on port {DEBUG_CHROME_PORT} ({DEBUG_CHROME_DIR}).")
+                return True, (f"🔄 Chrome: {verb} with debugging on port {DEBUG_CHROME_PORT}\n"
+                              f"Profile folder: {DEBUG_CHROME_DIR}")
+            time.sleep(0.5)
+        _stop_debug_chrome()    # didn't come up: close it and try once more
+        restarted = True
+    return False, (f"❌ Chrome: opened, but port {DEBUG_CHROME_PORT} never answered (tried twice). "
+                   f"Close every Chrome window and tap again.")
+
+
+def debug_button(s):
+    """What the Launch debug Chrome button does: packages first, then Chrome. One reply with everything."""
+    phone_reply(s, "🧪 Working on it...", "Checking websockets and aiohttp, then starting Chrome.")
+    lines = ensure_debug_packages()
+    ok, chrome_msg = launch_debug_chrome()
+    lines.append(chrome_msg)
+    all_ok = ok and not any(l.startswith("❌") for l in lines)
+    return phone_reply(s, "🧪 Debug setup done" if all_ok else "⚠️ Debug setup had a problem", "\n".join(lines))
 
 
 def debug_chrome_ping():
     """Send the Launch debug Chrome button to your phone, one time only."""
     time.sleep(15)
     s = load_settings()
-    if not s["ntfy_topic"] or s.get("debug_btn_v1"):
+    if not s["ntfy_topic"] or s.get("debug_btn_v2"):
         return
     try:
         body = {"topic": s["ntfy_topic"], "title": "🧪 Debug Chrome (temporary)",
-                "message": (f"Tap Launch to open Chrome with --remote-debugging-port={DEBUG_CHROME_PORT} and "
+                "message": (f"Tap Launch to install websockets + aiohttp (if missing) and open Chrome with --remote-debugging-port={DEBUG_CHROME_PORT} and "
                             f"--user-data-dir=\"{DEBUG_CHROME_DIR}\" (Chrome 136+ needs its own profile folder "
                             f"for the debugger). You can also send \"debugchrome\" any time."),
                 "priority": 3,
@@ -6308,7 +6393,7 @@ def debug_chrome_ping():
         fetch(req, timeout=10)
         with settings_lock:
             fresh = load_settings()
-            fresh["debug_btn_v1"] = True
+            fresh["debug_btn_v2"] = True
             save_settings(fresh)
         log("Sent the Launch debug Chrome button to your phone.")
     except Exception as e:
