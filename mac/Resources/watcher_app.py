@@ -567,9 +567,59 @@ def phone_acked(s, since):
     return False
 
 
+import re as _re
+_TZ_WORDS = {"PDT": -7, "PST": -8, "PT": None, "PACIFIC": None, "MDT": -6, "MST": -7, "MT": None, "MOUNTAIN": None,
+             "CDT": -5, "CST": -6, "CT": None, "CENTRAL": None, "AKDT": -8, "AKST": -9, "HST": -10,
+             "UTC": 0, "GMT": 0, "ET": "et", "EDT": "et", "EST": "et", "EASTERN": "et"}
+_DST_BASE = {"PT": -8, "PACIFIC": -8, "MT": -7, "MOUNTAIN": -7, "CT": -6, "CENTRAL": -6}
+_T = r"(\d{1,2})(?::(\d{2}))?\s*(a|p)\.?\s*m\.?"
+_ZONE = r"\(?\b(PDT|PST|PT|MDT|MST|MT|CDT|CST|CT|AKDT|AKST|HST|UTC|GMT|ET|EDT|EST|Pacific|Mountain|Central|Eastern)\b(?:\s+time)?\)?"
+TIME_ZONE_RX = _re.compile(_T + r"(?:\s*(?:-|–|—|to|until)\s*" + _T + r")?\s*" + _ZONE, _re.I)
+
+
+def _us_dst(d=None):
+    d = d or datetime.utcnow()
+    from datetime import date as _date
+    y = d.year
+    start = _date(y, 3, 8 + (6 - _date(y, 3, 8).weekday()) % 7)      # 2nd Sunday of March
+    end = _date(y, 11, 1 + (6 - _date(y, 11, 1).weekday()) % 7)      # 1st Sunday of November
+    return start <= d.date() < end
+
+
+def to_eastern(text):
+    """Rewrite any '2:00pm PDT' / '4 PM CT' / '2pm - 3pm Pacific' in an alert as Eastern time."""
+    if not text:
+        return text
+    dst = _us_dst()
+    et_off = -4 if dst else -5
+
+    def conv(h, mi, ap, off):
+        mins = (int(h) % 12 + (12 if ap.lower() == "p" else 0)) * 60 + int(mi or 0) + (et_off - off) * 60
+        nxt = mins >= 24 * 60
+        mins %= 24 * 60
+        hh, mm = divmod(mins, 60)
+        return f"{(hh % 12) or 12}:{mm:02d} {'PM' if hh >= 12 else 'AM'}", nxt
+
+    def fix(m):
+        zone = m.group(7).upper()
+        off = _TZ_WORDS.get(zone)
+        if off is None:
+            off = _DST_BASE[zone] + (1 if dst else 0)
+        if off == "et":
+            off = et_off
+        a, n1 = conv(m.group(1), m.group(2), m.group(3), off)
+        if m.group(4):
+            b, n2 = conv(m.group(4), m.group(5), m.group(6), off)
+            return f"{a} - {b} ET" + (" (next day)" if n2 else "")
+        return f"{a} ET" + (" (next day)" if n1 else "")
+    return TIME_ZONE_RX.sub(fix, text)
+
+
 def send_all(s, title, msg, discord_msg=None, discord_mention_on=True, ack_button=False, channel=None):
     """Phone + Mac get the personal message. Discord only gets discord_msg (if given),
     so the server sees clean, general alerts and none of your personal status pings."""
+    title, msg = to_eastern(title), to_eastern(msg)
+    discord_msg = to_eastern(discord_msg) if discord_msg else discord_msg
     notify_phone(s, title, msg, ack_button)
     if discord_msg:
         if channel:
@@ -2385,6 +2435,31 @@ CHECKER_BLOCK = _re.compile(r"robot or human|press (?:&|and) hold|verify (?:that
                             r"access denied|unusual (?:activity|traffic)|are you a robot|pardon our interruption|"
                             r"request unsuccessful", _re.I)
 POKEMON = _re.compile(r"pok[eé]mon", _re.I)
+# Anything that's a chance-to-buy: drawings, raffles, lotteries, invites, sweepstakes, entry windows.
+CHANCE = r"(?:drawings?|draws?|raffles?|lotter(?:y|ies)|invites?|invitations?|sweepstakes?|sweeps|entr(?:y|ies))"
+CHANCE_OPEN = _re.compile(
+    r"(?:enter|join|request|apply|sign up|register|submit)(?:\s+(?:for|to|in(?:to)?))?\s+(?:the\s+|an?\s+|your\s+)?" + CHANCE +
+    r"|" + CHANCE + r"\s+(?:is\s+)?(?:now\s+)?(?:open|live|active)\b|" + CHANCE + r"\s+(?:ends|closes)\b"
+    r"|invite[- ]only|invitation to (?:purchase|buy)|invite request|request an? invite"
+    r"|enter (?:for )?(?:a|the|your) chance|chance to (?:buy|purchase)|enter now", _re.I)
+CHANCE_SOON = _re.compile(
+    CHANCE + r"\s+(?:window\s+)?(?:opens|starts|begins|coming soon|opens soon)\b|(?:upcoming|next)\s+" + CHANCE +
+    r"|" + CHANCE + r"\s+(?:window|period)\b", _re.I)
+CHANCE_DONE = _re.compile(
+    CHANCE + r"\s+(?:has\s+)?(?:ended|closed|is closed|is over)\b|(?:invites?|entr(?:y|ies)|request)\s+(?:sent|submitted|received|requested)"
+    r"|you(?:'re| are| have been)\s+(?:on the list|entered|registered)|you(?:'ve| have) (?:entered|requested)"
+    r"|not selected|winners? (?:have been )?(?:selected|notified|chosen)", _re.I)
+
+
+def chance_state(text, buttons=()):
+    """'open' / 'soon' / None for a drawing, raffle, invite, lottery... on a store page."""
+    t = text[:4000]
+    live_btn = any(CHANCE_OPEN.search(b.get("t", "")) and not b.get("d") for b in buttons)
+    if live_btn or (CHANCE_OPEN.search(t) and not CHANCE_DONE.search(t)):
+        return "open"
+    if CHANCE_SOON.search(t) and not CHANCE_DONE.search(t):
+        return "soon"
+    return None
 TCG_WORDS = _re.compile(r"trading card|\btcg\b|booster|elite trainer|\betb\b|collection|\btins?\b|blister|\bcards?\b",
                         _re.I)
 PRICE_RE = _re.compile(r"\$\s?(\d{1,4}(?:,\d{3})*(?:\.\d{2})?)")
@@ -2395,8 +2470,8 @@ OUT_OF_STOCK = _re.compile(r"out of stock|sold out|notify me when (?:it'?s|it’
 OTHER_PRODUCTS = _re.compile(r"\n(?:similar items|guests also viewed|guests also bought|frequently bought together|"
                              r"more to consider|you may also like|related items|recommended for you|"
                              r"more from this brand|featured items|explore more)\b", _re.I)
-DRAW_RX = _re.compile(r"drawing\s+(ended|ends|closes|closed|opens|starts|begins|is open|now open|open)\b[:\s]*([^\n]*)",
-                      _re.I)
+DRAW_RX = _re.compile(r"(?:drawing|raffle|lottery|entry|entries|invites?|sweepstakes)\s+"
+                     r"(ended|ends|closes|closed|opens|starts|begins|is open|now open|is live|open|live)\b[:\s]*([^\n]*)", _re.I)
 
 # Official retail prices (Target / Pokémon). You're alerted up to "allowance" dollars over these.
 # Most specific first: the first line whose name is in the product title wins.
@@ -2663,9 +2738,8 @@ BB_OTHER = _re.compile(r"\n(?:customers also (?:viewed|bought)|similar products|
                       r"customers who viewed this)\b", _re.I)
 BB_SELLER = _re.compile(r"sold (?:(?:&|and) shipped )?by\s+([^\n]+)", _re.I)
 # Best Buy's invite system: you request an invite (a drawing), and the people picked get 24 hours to buy.
-BB_INVITE = _re.compile(r"(?:request|get|ask for|apply for)\s+(?:an?\s+)?invite|invite[- ]only|invitation to (?:purchase|buy)|"
-                        r"invite request", _re.I)
-BB_INVITE_DONE = _re.compile(r"invite(?:s)? (?:requested|sent|closed|ended)|you(?:'re| are) (?:on the list|entered)", _re.I)
+BB_INVITE = CHANCE_OPEN
+BB_INVITE_DONE = CHANCE_DONE
 BESTBUY_SEEN_FILE = os.path.join(DATA_DIR, "bestbuy_invites_seen.json")
 
 
@@ -2708,7 +2782,7 @@ def parse_bestbuy_product(d, url, s):
         bool(BB_INVITE.search(main[:3000]) and not BB_INVITE_DONE.search(main[:3000]) and
              not any(BB_INVITE.search(b.get("t", "")) and b.get("d") for b in buttons))
     it = judge({"name": name[:160], "url": url, "price": price, "in_stock": in_stock or invite, "third_party": third}, s, "bestbuy")
-    if invite and it["status"] in ("in", "nolimit"):
+    if invite and it["status"] in ("in", "nolimit", "over"):
         it["status"] = "invite"                 # invite requests are open: enter for a chance to buy
     return it
 
@@ -2795,7 +2869,7 @@ def parse_target_search(d, s):
 
 
 # Walmart now shows each drawing as "Drawing entry window  Oct 21, 2:00pm - 3:00pm PDT".
-WINDOW_RX = _re.compile(r"(?:drawing\s+)?entry\s+window\W*([A-Za-z]{3,9})\.?\s+(\d{1,2}),?\s*(?:(\d{4})\s*,?\s*)?"
+WINDOW_RX = _re.compile(r"(?:(?:drawing|raffle|lottery|entry|entries|invite)\s+(?:entry\s+)?(?:window|period)|enter between)\W*([A-Za-z]{3,9})\.?\s+(\d{1,2}),?\s*(?:(\d{4})\s*,?\s*)?"
                         r"(\d{1,2})(?::(\d{2}))?\s*([ap])\.?m\.?\s*(?:-|–|—|to)\s*"
                         r"(?:([A-Za-z]{3,9})\.?\s+(\d{1,2}),?\s*)?(\d{1,2})(?::(\d{2}))?\s*([ap])\.?m\.?\s*([A-Z]{2,4})?", _re.I)
 TZ_OFFSETS = {"ET": -4, "EDT": -4, "EST": -5, "CT": -5, "CDT": -5, "CST": -6, "MT": -6, "MDT": -6, "MST": -7,
@@ -2848,15 +2922,15 @@ def parse_walmart(d, s):
     if not cards:   # no product links found: fall back to reading the page line by line
         lines = [l.strip() for l in d.get("text", "").splitlines() if l.strip()]
         for i, l in enumerate(lines):
-            if DRAW_RX.search(l) or WINDOW_RX.search(" ".join(lines[i:i + 3])):
+            if DRAW_RX.search(l) or WINDOW_RX.search(" ".join(lines[i:i + 3])) or CHANCE_OPEN.search(l):
                 back = lines[max(0, i - 8):i + 1]
-                name = next((x for x in reversed(back) if POKEMON.search(x)), None)
+                name = next((x for x in reversed(back) if is_tcg(x)), None)
                 if name and name not in {c["name"] for c in cards}:
                     start = max(j for j in range(max(0, i - 8), i + 1) if lines[j] == name)
                     cards.append({"href": WALMART_DRAW, "name": name, "text": "\n".join(lines[start:i + 3])})
     out = []
     for c in cards:
-        if not POKEMON.search(c["name"]):
+        if not is_tcg(c["name"]):          # Pokémon cards only (no plush, figures, toys)
             continue
         t = c.get("text", "")
         m = DRAW_RX.search(t)
@@ -2869,16 +2943,18 @@ def parse_walmart(d, s):
             status = ("closed" if w in ("ended", "closed") else
                       "open" if w in ("ends", "closes", "open", "is open", "now open") else "upcoming")
             when = ("Ends " if status == "open" else "Starts " if status == "upcoming" else "Ended ") + m.group(2).strip()
-        elif _re.search(r"enter (?:the )?drawing|enter now|join (?:the )?drawing", t, _re.I):
+        elif CHANCE_OPEN.search(t) and not CHANCE_DONE.search(t):
             status = "open"
-        elif _re.search(r"coming soon|opens soon|upcoming", t, _re.I):
+        elif CHANCE_DONE.search(t):
+            status = "closed"
+        elif _re.search(r"coming soon|opens soon|upcoming", t, _re.I) or CHANCE_SOON.search(t):
             status = "upcoming"
         else:
             status = "unknown"
         price = store_price(t)
         limit = msrp_limit(c["name"], s, "walmart")
         out.append({"name": c["name"][:160], "url": c.get("href") or WALMART_DRAW, "price": price, "limit": limit,
-                    "status": status, "when": when[:60],
+                    "status": status, "when": to_eastern(when)[:60],
                     "msrp_ok": limit is not None and not NOT_RETAIL.search(c["name"])
                                and (price is None or price <= limit + allowance_for(limit, s) + ROUNDING)})
     order = {"open": 0, "upcoming": 1, "unknown": 2, "closed": 3}
@@ -3106,7 +3182,17 @@ def save_bestbuy_seen(seen):
 
 
 INVITE_HOW = {"bestbuy": ("Request an invite", "If you're picked, you get 24 hours to buy."),
+              "target": ("Enter the drawing", "If you're picked, you get a link to buy."),
+              "walmart": ("Enter the drawing", "If you're picked, you get a link to buy."),
 }
+
+
+def shop_soon_alert(s, it, name):
+    site = SITE_NAMES[name]
+    price = f" ({money_str(it.get('price'))})" if it.get("price") is not None else ""
+    send_all(with_role(s, f"discord_role_{name}"), f"{site} drawing coming up", f"{it['name']}{price}. Coming up soon.",
+             f"\U0001F39F\uFE0F **{site} drawing/invite coming up:** {it['name']}{price}. "
+             f"You'll get another ping when it opens.\n<{it['url']}>", channel=name)
 
 
 def shop_invite_alert(s, it, name):
@@ -3222,6 +3308,19 @@ SHOPS = {"target": {"search": TARGET_SEARCH, "product": parse_target_product, "s
                      "alert": walmart_alert, "own": "Walmart's own price"}}
 
 
+def mark_chance(it, d):
+    """Any store page with a drawing / raffle / lottery / invite for a Pokémon card product, whatever the price."""
+    if it.get("status") in ("third", "notretail") or not is_tcg(it.get("name", "")):
+        return it
+    main = BB_OTHER.split(OTHER_PRODUCTS.split(d.get("text", ""), 1)[0], 1)[0]
+    st = chance_state(main, d.get("buttons", []))
+    if st == "open":
+        it["status"] = "invite"
+    elif st == "soon" and it.get("status") != "invite":
+        it["status"] = "invite_soon"
+    return it
+
+
 def _run_shop(name, s):
     """Target and Best Buy: check your links + the Pokémon card search, alert for official cards at MSRP."""
     c, cfg, site = checkers[name], SHOPS[name], SITE_NAMES[name]
@@ -3251,22 +3350,26 @@ def _run_shop(name, s):
         if url == cfg["search"]:
             found = []
             scanned = sum(1 for x in d.get("cards", []) if is_tcg(x.get("name", "")))
+            chance_cards = [{"url": x["href"], "name": x["name"]} for x in d.get("cards", [])
+                            if x.get("href") and is_tcg(x.get("name", "")) and chance_state(x.get("text", ""))]
             if not scanned:
                 log(f"{site}: the search page showed no Pokémon card products this time "
                     f"(page title: \"{(d.get('title') or 'none')[:70]}\").")
-            for cand in cfg["scan"](d, s)[:5]:             # search results don't show the seller,
+            cands = cfg["scan"](d, s)[:5]
+            cands += [x for x in chance_cards if x["url"] not in {y["url"] for y in cands}][:5]
+            for cand in cands:                             # search results don't show the seller,
                 if cand["url"] in seen:                    # so open each hit to double-check
                     continue
                 if checker_stop.wait(random.uniform(*CHECK_GAP)):
                     return
                 pd = load_page(name, cand["url"])
                 check_block(pd)
-                it = cfg["product"](pd, cand["url"], s)
+                it = mark_chance(cfg["product"](pd, cand["url"], s), pd)
                 it["from_scan"] = True
-                if it["status"] in ("in", "invite"):
+                if it["status"] in ("in", "invite", "invite_soon"):
                     found.append(it)
         else:
-            it = cfg["product"](d, url, s)
+            it = mark_chance(cfg["product"](d, url, s), d)
             if it["status"] == "nolimit":        # official, sold by the store, just not in the price table
                 it["status"] = "in"
                 it["note"] = cfg["own"]
@@ -3277,14 +3380,17 @@ def _run_shop(name, s):
                 items.append(it)
         if i < len(urls) - 1 and checker_stop.wait(random.uniform(*CHECK_GAP)):
             return
-    if name == "bestbuy":
-        seen = load_invites_seen(name)
-        for it in items:
-            if it["status"] == "invite" and it["url"] not in seen:
-                seen.add(it["url"])
-                log(f"{site} invite open: {it['name']}")
-                shop_invite_alert(s, it, name)
-        save_invites_seen(name, seen)
+    seen = load_invites_seen(name)               # every store: drawings, raffles and invites
+    for it in items:
+        if it["status"] == "invite" and it["url"] not in seen:
+            seen.add(it["url"])
+            log(f"{site} drawing/invite open: {it['name']}")
+            shop_invite_alert(s, it, name)
+        elif it["status"] == "invite_soon" and "soon|" + it["url"] not in seen:
+            seen.add("soon|" + it["url"])
+            log(f"{site} drawing/invite coming up: {it['name']}")
+            shop_soon_alert(s, it, name)
+    save_invites_seen(name, seen)
     for it in items:
         if it["status"] == "in":
             if it["url"] not in c["alerted"]:
@@ -3296,12 +3402,12 @@ def _run_shop(name, s):
         else:
             c["alerted"].discard(it["url"])
     instock = sum(1 for it in items if it["status"] == "in")
-    invites = sum(1 for it in items if it["status"] == "invite")
+    invites = sum(1 for it in items if it["status"] in ("invite", "invite_soon"))
     c["items"] = items
     seen_txt = (f"{scanned} Pokémon products seen" if scanned is not None else f"{len(items)} checked")
     c["message"] = (f"{instock} in stock at MSRP!" if instock else f"Nothing in stock at MSRP ({seen_txt})")
     if invites:
-        c["message"] += f", {invites} invite{'s' if invites > 1 else ''} open"
+        c["message"] += f", {invites} drawing/invite{'s' if invites > 1 else ''} open or coming up"
     if problems:
         c["message"] += f", {len(problems)} page{'s' if len(problems) > 1 else ''} didn't load"
     c["took"] = time.time() - started
@@ -3345,9 +3451,9 @@ def _run_walmart(s):
     items = parse_walmart(d, s)
     seen = load_walmart_seen()
     for it in items:
+        if it["status"] == "unknown":
+            it["status"], it["when"] = "upcoming", it["when"] or "time not shown yet"
         if it["status"] not in ("open", "upcoming"):
-            continue
-        if s["walmart_msrp_only"] and not it["msrp_ok"]:
             continue
         # Once per item per day for "coming up", then once more when it opens.
         key = f"{it['name']}|{it['status']}|{eastern_now():%Y-%m-%d}"
@@ -4064,7 +4170,7 @@ try{document.documentElement.dataset.theme=localStorage.getItem("qw-theme")||"ne
   <div class="sub" id="walmartTestMsg"></div>
   <details class="inner"><summary>Walmart settings</summary>
     <label>Check every (minutes, 10 or more)</label><input id="walmart_every" type="number" min="10">
-    <label class="check"><input type="checkbox" id="walmart_msrp_only"> Only alert me for drawings at or under my MSRP limits</label>
+    <p class="sub">Drawings alert for every Pok&eacute;mon card product, whatever the price: once when it's coming up, again when it opens.</p>
     <label class="check"><input type="checkbox" id="walmart_products"> Also check Walmart's Pok&eacute;mon card products for MSRP restocks (sold by Walmart only)</label>
     <label>Walmart product links to watch, one per line (up to 10)</label>
     <textarea id="walmart_watch" rows="3" spellcheck="false" placeholder="https://www.walmart.com/ip/.../123456789"></textarea>
@@ -4280,7 +4386,7 @@ async function save(){
   s.discord_enabled=document.getElementById("discord_enabled").checked;
   s.schedule_mode=schedMode;s.schedule_custom=week;
   s.check_signed_in=document.getElementById("check_signed_in").checked;
-  ["target_enabled","target_scan","target_open_page","walmart_enabled","walmart_msrp_only","checker_invisible","pkc_background","phone_control","bestbuy_enabled","bestbuy_scan","bestbuy_open_page","walmart_products","walmart_open_page"].forEach(k=>s[k]=document.getElementById(k).checked);
+  ["target_enabled","target_scan","target_open_page","walmart_enabled","checker_invisible","pkc_background","phone_control","bestbuy_enabled","bestbuy_scan","bestbuy_open_page","walmart_products","walmart_open_page"].forEach(k=>s[k]=document.getElementById(k).checked);
   s.auto_login=document.getElementById("auto_login").checked;
   const r=await api("/save",s);fill(r.settings,true);
   ["saved","discordMsg"].forEach(id=>{const el=document.getElementById(id);el.textContent="Saved";
@@ -4349,7 +4455,7 @@ function fill(s,force){
   document.getElementById("discord_enabled").checked=!!s.discord_enabled;
   if(!force)fillSchedule(s);
   document.getElementById("check_signed_in").checked=!!s.check_signed_in;
-  ["target_enabled","target_scan","target_open_page","walmart_enabled","walmart_msrp_only","checker_invisible","pkc_background","phone_control","bestbuy_enabled","bestbuy_scan","bestbuy_open_page","walmart_products","walmart_open_page"].forEach(k=>document.getElementById(k).checked=!!s[k]);
+  ["target_enabled","target_scan","target_open_page","walmart_enabled","checker_invisible","pkc_background","phone_control","bestbuy_enabled","bestbuy_scan","bestbuy_open_page","walmart_products","walmart_open_page"].forEach(k=>document.getElementById(k).checked=!!s[k]);
   showPhoneLinks(s);
   document.getElementById("auto_login").checked=!!s.auto_login;
   showLogin(s);
@@ -4832,7 +4938,7 @@ loadUpdate();setInterval(loadUpdate,5*60000);
 /* ===== Target & Walmart ===== */
 const CHIP={in:"In stock at MSRP",out:"Out of stock",third:"Third-party seller",over:"Above MSRP limit",
   nolimit:"No retail price on file",notretail:"Import / repack",
-  open:"Drawing open",upcoming:"Coming up",closed:"Closed",unknown:"Status unclear",invite:"Invite open"};
+  open:"Drawing open",upcoming:"Coming up",closed:"Closed",unknown:"Status unclear",invite:"Drawing/invite open",invite_soon:"Drawing coming up"};
 function money(v){return v==null?"":"$"+Number(v).toFixed(2);}
 function checkerRow(i,isDraw){
   const a=document.createElement("a");a.className="crow";a.href=/^https?:\/\//.test(i.url||"")?i.url:"#";

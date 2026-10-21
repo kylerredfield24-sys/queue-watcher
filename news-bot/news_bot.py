@@ -39,7 +39,8 @@ UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML
 # Card-game news only (PokéJungle also covers the video games, anime, etc.)
 TCG = re.compile(r"\btcg\b|trading card|card game|\bcards?\b|\bset\b|expansion|booster|elite trainer|\betb\b|"
                  r"\bpromo|prerelease|pre-release|collection box|\bcollection\b|premium collection|\btins?\b|"
-                 r"restock|pok[eé]mon center|\bex\b|illustration rare|\bsar\b|card list|reveal", re.I)
+                 r"restock|pok[eé]mon center|\bex\b|illustration rare|\bsar\b|card list|reveal|"
+                 r"drawings?|raffles?|lotter(?:y|ies)|invites?|invitation|sweepstakes|entry window", re.I)
 NOT_TCG = re.compile(r"\bpok[eé]mon go\b|\bunite\b|\banime\b|\bepisode\b|\bmovie\b|\bscarlet and violet dlc\b|"
                      r"\bpok[eé]mon sleep\b|\bmasters ex\b|\bcafe\b|\bplush\b|\bvideo game\b|\bswitch\b|\bstream\b",
                      re.I)
@@ -123,11 +124,39 @@ def unconfirmed(it):
     return bool(RUMOR.search(it["title"]) or re.search(r"\brumou?rs?\b|\bleaks?\b", it["cats"], re.I))
 
 
+_T = r"(\d{1,2})(?::(\d{2}))?\s*(a|p)\.?\s*m\.?"
+TIME_ZONE_RX = re.compile(_T + r"(?:\s*(?:-|–|—|to|until)\s*" + _T + r")?\s*\(?\b(PDT|PST|PT|MDT|MST|MT|CDT|CST|CT|"
+                          r"Pacific|Mountain|Central)\b(?:\s+time)?\)?", re.I)
+
+
+def to_eastern(text):
+    """'2:00pm PDT' / '4 PM CT' in a story becomes Eastern time (DST: Mar-Oct)."""
+    dst = 3 <= time.gmtime().tm_mon <= 10
+    base = {"P": -8, "M": -7, "C": -6}
+
+    def conv(h, mi, ap, off):
+        mins = (int(h) % 12 + (12 if ap.lower() == "p" else 0)) * 60 + int(mi or 0) + ((-5) - off) * 60
+        nxt, mins = mins >= 1440, mins % 1440
+        hh, mm = divmod(mins, 60)
+        return f"{(hh % 12) or 12}:{mm:02d} {'PM' if hh >= 12 else 'AM'}", nxt
+
+    def fix(m):
+        z = m.group(7).upper()
+        daylight = z.endswith("DT") or (not z.endswith("ST") and dst)     # "PT"/"Central" follow the season
+        off = base[z[0]] + (1 if daylight else 0) - (1 if dst else 0)      # relative to Eastern's own offset
+        a, n1 = conv(m.group(1), m.group(2), m.group(3), off)
+        if m.group(4):
+            b, n2 = conv(m.group(4), m.group(5), m.group(6), off)
+            return f"{a} - {b} ET" + (" (next day)" if n2 else "")
+        return f"{a} ET" + (" (next day)" if n1 else "")
+    return TIME_ZONE_RX.sub(fix, text or "")
+
+
 def embed(it, test=False):
     rumor = unconfirmed(it)
     lead = "\U0001F9EA TEST: " if test else ("\u26A0\uFE0F Unconfirmed: " if rumor else "\U0001F4F0 ")
-    e = {"title": lead + it["title"][:230], "url": it["link"],
-         "description": it["summary"][:350], "color": 0xF1C40F if test else (0xE67E22 if rumor else 0x3498DB),
+    e = {"title": lead + to_eastern(it["title"])[:230], "url": it["link"],
+         "description": to_eastern(it["summary"])[:350], "color": 0xF1C40F if test else (0xE67E22 if rumor else 0x3498DB),
          "footer": {"text": f"Guardian Monitor · {it['source']}" + (" · rumor/leak, not official yet" if rumor else "")}}
     if it["image"].startswith("http"):
         e["image"] = {"url": it["image"]}
