@@ -38,7 +38,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs
 
 PORT = 8765
-VERSION = "5.7"   # the launcher compares this, and replaces an older copy that's still running
+VERSION = "5.8"   # the launcher compares this, and replaces an older copy that's still running
 PLATFORM = "mac"  # the Windows version switches this to "windows"
 TOKEN = secrets.token_hex(16)
 PAGE_LOAD_WAIT = 8
@@ -6276,8 +6276,28 @@ def health_loop():
 # Your settings, saved login and wallpaper are never touched.
 import hashlib
 
-UPDATE_REPO = "kylerredfield24-sys/queue-watcher"
-UPDATE_BASE = f"https://raw.githubusercontent.com/{UPDATE_REPO}/main/"
+# Updates now come from your PRIVATE repo. The app reads your GitHub token from a file called
+# github_token.txt in the app's data folder (never from this code, so it's never pushed anywhere).
+# No token file yet? It keeps using the old public repo, so updates never just stop.
+PRIVATE_REPO = "kylerredfield24-sys/guardian-monitor"
+PUBLIC_REPO = "kylerredfield24-sys/queue-watcher"
+TOKEN_FILE = os.path.join(DATA_DIR, "github_token.txt")
+
+
+def github_token():
+    try:
+        with open(TOKEN_FILE, encoding="utf-8-sig") as f:
+            return f.read().strip()
+    except Exception:
+        return os.environ.get("GUARDIAN_GITHUB_TOKEN", "").strip()
+
+
+def update_repo():
+    return PRIVATE_REPO if github_token() else PUBLIC_REPO
+
+
+UPDATE_REPO = PUBLIC_REPO            # kept for anything that still reads the old name
+UPDATE_BASE = f"https://raw.githubusercontent.com/{PUBLIC_REPO}/main/"
 UPDATE_EVERY = 3 * 60 * 60
 SAFE_PATH = _re.compile(r"^[A-Za-z0-9_.\- ]+(?:/[A-Za-z0-9_.\- ]+)*$")
 update_state = {"current": VERSION, "latest": None, "available": False, "notes": "", "checked": None,
@@ -6295,9 +6315,12 @@ def app_root():
 
 
 def _get(path, limit):
-    req = urllib.request.Request(UPDATE_BASE + path, headers={"User-Agent": "QueueWatcher-updater",
-                                                              "Cache-Control": "no-cache"})
-    with fetch(req, timeout=30) as r:
+    tok = github_token()
+    headers = {"User-Agent": "QueueWatcher-updater", "Cache-Control": "no-cache"}
+    if tok:
+        headers["Authorization"] = f"token {tok}"
+    url = f"https://raw.githubusercontent.com/{update_repo()}/main/{path}"
+    with fetch(urllib.request.Request(url, headers=headers), timeout=30) as r:
         return r.read(limit)
 
 
@@ -6313,6 +6336,8 @@ def check_update():
     except Exception as e:
         update_state.update(error="Couldn't check for updates right now.",
                             checked=datetime.now().astimezone().isoformat())
+        if github_token() and ("401" in str(e) or "404" in str(e)):
+            e = f"{e} (your GitHub token in github_token.txt may be wrong or expired)"
         log(f"Update check failed: {e}")
         return None
 

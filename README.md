@@ -2,7 +2,9 @@
 
 This repo holds the update files for Guardian Monitor (Mac and Windows). The app's **Update** button reads `version.json`, downloads the listed files, checks each file's SHA-256 fingerprint, and installs them.
 
-Current version: **5.7**
+Current version: **5.8**
+
+5.8: Updates now come from the private repo (kylerredfield24-sys/guardian-monitor) using a GitHub token saved in github_token.txt in the app's data folder. Without that file the app keeps updating from this public repo.
 
 5.7: After an update installs and the app restarts, your phone now gets a "✅ Updated to X" message with the current status, so you know it went through.
 
