@@ -1,11 +1,11 @@
 {
-  "version": "4.7",
-  "notes": "4.7: removed the Amazon checker (Amazon alerts now come from your Keepa script). Everything else is the same.",
+  "version": "4.8",
+  "notes": "4.8: Walmart drawings fixed - reads Walmart's new 'Drawing entry window' times, pings your Walmart role when a drawing is coming up and again when it opens, checks every ~3 min while one is coming up, and counts multi-packs/bundles for the MSRP check.",
   "files": {
     "mac": {
-      "Resources/watcher_app.py": "19548f396d1fa7212076120c9a0e498b02bd08ff7d0bf6d82e21ea8b567d9604",
+      "Resources/watcher_app.py": "93bcaf09533b73c1c608d3285949b8c17f1ec5d694881f42ae09ec4a573727c2",
       "Resources/panel.js": "1ca5a1d6d0fd91e7526c6be3c75955b16928013fb0243bde1f4cdd37b7fa6e40",
-      "Resources/app_version": "597fd61a4dc22d0cf28dd3e89619b1e8cab79ebc61a95aa784a93baab3eecc3a",
+      "Resources/app_version": "335f6442cc8f7e4980fe4ba346115a00101db5a939992b25b27ebf595238e8d5",
       "Resources/panel_version": "022804d19c8fe566dc00dca4721c1eadf6ed71164d647a2e77493ac87c4fe3a6",
       "Resources/AppIcon.icns": "6b37b4479b291aba49e8a189be4dfdfef8727216e8a1fd48b2ff0b22956bdb5c",
       "Resources/guardian_avatar.png": "f1f0d53666d79a1c9e0d788861d6fa47e09b3d4f5fc6bcd2eb388990563c7ad6",
@@ -13,10 +13,10 @@
       "Info.plist": "0240cd9a3a2cdebf2f8a458834d1faeb392658b93d61346d7363b9c14438816e"
     },
     "windows": {
-      "watcher_app.py": "098540a5bdf3586e2af53e65053bd1a216c36867c343ea390891eaba0f1ab776",
+      "watcher_app.py": "9768307766a52590950da0722a7c63d6839cb6b8004f04c14fc21779aa87874a",
       "winplat.py": "9a44879168a95d934a5f1325dc5ee6aa5fccaf180411523f30bee7455bdeb44a",
       "launcher.pyw": "8e8fc021d3aaad76e3cc9a864e401095882c5f7ceedee8bd185d4200af4f4039",
-      "app_version": "597fd61a4dc22d0cf28dd3e89619b1e8cab79ebc61a95aa784a93baab3eecc3a",
+      "app_version": "335f6442cc8f7e4980fe4ba346115a00101db5a939992b25b27ebf595238e8d5",
       "QueueWatcher.ico": "e7595b3aaedf2f63af463c789f9867448880ce238fc94752a746204b15954557",
       "guardian_avatar.png": "f1f0d53666d79a1c9e0d788861d6fa47e09b3d4f5fc6bcd2eb388990563c7ad6"
     }

@@ -2544,10 +2544,17 @@ ALIASES = [(r"\betb\b", "elite trainer box"), (r"booster display", "booster box"
 
 
 def bundle_count(name):
-    m = _re.search(r"(\d+)\s*-?\s*(?:pack|pk|count|ct)\s+bundle|bundle of (\d+)|set of (\d+)|\b(\d+)\s*x\s", name, _re.I)
+    """How many of the item are in the listing. "3-Pack Blister" is one item, but
+    "Booster Bundle 2-Pack", "Knock Out Collection 4-Count Bundle" and "... 2-Pack Bundle" are several."""
+    m = _re.search(r"(\d+)\s*-?\s*(?:pack|pk|count|ct)\b(?=\s*(?:bundle\b|$|[,()\[\]|-]))|bundle of (\d+)|"
+                   r"set of (\d+)|\b(\d+)\s*x\s|\bx\s*(\d+)\s*$|\((\d+)\s*(?:pack|pk|count|ct)?\)\s*$", name, _re.I)
     if m:
         n = int(next(g for g in m.groups() if g))
         return n if 1 < n <= 12 else 1
+    # "Sylveon ex & Greninja ex Box Bundle" = two different ex boxes sold together
+    if _re.search(r"\bex\b.*(?:&|\band\b).*\bex\s+box(?:es)?\s+bundle|\bex\s+box(?:es)?\s+bundle\b.*\bex\b.*(?:&|\band\b).*\bex\b",
+                  name, _re.I):
+        return 2
     return 1
 
 
@@ -2787,16 +2794,66 @@ def parse_target_search(d, s):
     return items
 
 
+# Walmart now shows each drawing as "Drawing entry window  Oct 21, 2:00pm - 3:00pm PDT".
+WINDOW_RX = _re.compile(r"(?:drawing\s+)?entry\s+window\W*([A-Za-z]{3,9})\.?\s+(\d{1,2}),?\s*(?:(\d{4})\s*,?\s*)?"
+                        r"(\d{1,2})(?::(\d{2}))?\s*([ap])\.?m\.?\s*(?:-|–|—|to)\s*"
+                        r"(?:([A-Za-z]{3,9})\.?\s+(\d{1,2}),?\s*)?(\d{1,2})(?::(\d{2}))?\s*([ap])\.?m\.?\s*([A-Z]{2,4})?", _re.I)
+TZ_OFFSETS = {"ET": -4, "EDT": -4, "EST": -5, "CT": -5, "CDT": -5, "CST": -6, "MT": -6, "MDT": -6, "MST": -7,
+              "PT": -7, "PDT": -7, "PST": -8}
+
+
+def walmart_window(t):
+    """(status, when-text) from Walmart's "Drawing entry window ..." line, or None if it isn't there."""
+    m = WINDOW_RX.search(t)
+    if not m:
+        return None
+    from datetime import timezone, timedelta as _td
+    mon1, day1, yr, h1, mi1, ap1, mon2, day2, h2, mi2, ap2, tz = m.groups()
+    tzname = (tz or "ET").upper()
+    off = TZ_OFFSETS.get(tzname, -4)
+    if tzname == "PT":
+        off = -7 if 3 <= datetime.utcnow().month <= 10 else -8
+    zone = timezone(_td(hours=off))
+    now = datetime.now(timezone.utc)
+
+    def mk(mon, day, h, mi, ap):
+        try:
+            mo = datetime.strptime(mon[:3].title(), "%b").month
+        except ValueError:
+            return None
+        hh = int(h) % 12 + (12 if ap.lower() == "p" else 0)
+        year = int(yr) if yr else now.year
+        dt = datetime(year, mo, int(day), hh, int(mi or 0), tzinfo=zone)
+        if not yr and (dt - now).days > 200:      # "Jan 3" seen in late December
+            dt = dt.replace(year=year - 1)
+        elif not yr and (now - dt).days > 200:
+            dt = dt.replace(year=year + 1)
+        return dt
+
+    start = mk(mon1, day1, h1, mi1, ap1)
+    end = mk(mon2 or mon1, day2 or day1, h2, mi2, ap2)
+    if not start or not end:
+        return None
+    et = timezone(_td(hours=-4 if 3 <= now.month <= 10 else -5))
+    fmt = lambda x: x.astimezone(et).strftime("%b %d, %I:%M %p").replace(" 0", " ")
+    if now < start:
+        return "upcoming", f"Opens {fmt(start)} ET"
+    if now <= end:
+        return "open", f"Closes {fmt(end)} ET"
+    return "closed", f"Ended {fmt(end)} ET"
+
+
 def parse_walmart(d, s):
     cards = d.get("cards") or []
     if not cards:   # no product links found: fall back to reading the page line by line
         lines = [l.strip() for l in d.get("text", "").splitlines() if l.strip()]
         for i, l in enumerate(lines):
-            if DRAW_RX.search(l):
+            if DRAW_RX.search(l) or WINDOW_RX.search(" ".join(lines[i:i + 3])):
                 back = lines[max(0, i - 8):i + 1]
                 name = next((x for x in reversed(back) if POKEMON.search(x)), None)
-                if name:
-                    cards.append({"href": WALMART_DRAW, "name": name, "text": "\n".join(back)})
+                if name and name not in {c["name"] for c in cards}:
+                    start = max(j for j in range(max(0, i - 8), i + 1) if lines[j] == name)
+                    cards.append({"href": WALMART_DRAW, "name": name, "text": "\n".join(lines[start:i + 3])})
     out = []
     for c in cards:
         if not POKEMON.search(c["name"]):
@@ -2804,7 +2861,10 @@ def parse_walmart(d, s):
         t = c.get("text", "")
         m = DRAW_RX.search(t)
         when = ""
-        if m:
+        win = walmart_window(t)
+        if win:
+            status, when = win
+        elif m:
             w = m.group(1).lower()
             status = ("closed" if w in ("ended", "closed") else
                       "open" if w in ("ends", "closes", "open", "is open", "now open") else "upcoming")
@@ -3289,7 +3349,8 @@ def _run_walmart(s):
             continue
         if s["walmart_msrp_only"] and not it["msrp_ok"]:
             continue
-        key = f"{it['name']}|{it['status']}|{it['when']}"
+        # Once per item per day for "coming up", then once more when it opens.
+        key = f"{it['name']}|{it['status']}|{eastern_now():%Y-%m-%d}"
         if key in seen:
             continue
         seen.add(key)
@@ -3301,9 +3362,11 @@ def _run_walmart(s):
                      channel="walmart")
         else:
             log(f"Walmart drawing coming up: {it['name']}")
-            send_all(s, "Walmart drawing coming up", f"{it['name']} {price}. {it['when']}".strip(),
-                     f"\U0001F39F️ **Walmart drawing coming up:** {it['name']} {price} ({it['when']})\n<{WALMART_DRAW}>",
-                     discord_mention_on=False, channel="walmart")
+            send_all(with_role(s, "discord_role_walmart"), "Walmart drawing coming up",
+                     f"{it['name']} {price}. {it['when']}".strip(),
+                     f"\U0001F39F️ **Walmart drawing coming up:** {it['name']} {price} ({it['when']}). "
+                     f"You'll get another ping when it opens.\n<{WALMART_DRAW}>",
+                     channel="walmart")
     save_walmart_seen(seen)
     c["items"] = items
     live = [x for x in items if x["status"] in ("open", "upcoming")]
@@ -3378,6 +3441,8 @@ def checker_loop(name):
                     log(f"{SITE_NAMES.get(name, name.title())} checker problem: {e}")
                 c["last"] = time.time()
                 every = max({"target": 2, "walmart": 10, "bestbuy": 3}[name], int(s[f"{name}_every"]))
+                if name == "walmart" and any(i.get("status") == "upcoming" for i in c["items"]):
+                    every = min(every, 3)   # a drawing is coming up: check every ~3 min so the "open" ping is fast
                 c["next"] = time.time() + every * 60 * random.uniform(0.9, 1.15) * health_factor()
             c["wake"].wait(10)
         except Exception as e:
