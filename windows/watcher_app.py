@@ -38,7 +38,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs
 
 PORT = 8765
-VERSION = "5.9"   # the launcher compares this, and replaces an older copy that's still running
+VERSION = "5.10"   # the launcher compares this, and replaces an older copy that's still running
 PLATFORM = "mac"  # the Windows version switches this to "windows"
 TOKEN = secrets.token_hex(16)
 PAGE_LOAD_WAIT = 8
@@ -6004,10 +6004,13 @@ def phone_test(s, text):
 
 def phone_token(s, text):
     """True if the message was a token command (even if the reply couldn't be sent)."""
-    first = (text.strip().split() or [""])[0].lower()
+    t = text.strip()
+    if _re.match(r"(github_pat_|ghp_)", t):          # just the token by itself also works
+        t = "token " + t
+    first = (t.split() or [""])[0].lower()
     if first not in ("token", "githubtoken", "github_token"):
         return False
-    _phone_token(s, text)
+    _phone_token(s, t)
     return True
 
 
@@ -6058,7 +6061,7 @@ def phone_command(s, text):
     if phone_setup(s, text) or phone_switch(s, text) or phone_test(s, text):
         return True
     word = text.strip().lower().strip("!. ")
-    log(f'Phone command: "{word[:20]}"')
+    log(f'Phone command: "{_re.sub(r"(github_pat_|ghp_)[A-Za-z0-9_]*", "[token hidden]", word)[:20]}"')
     if word in ("start", "go", "watch"):
         if state["status"] == "watching":
             return phone_reply(s, "👍 Already watching", status_text())
@@ -6502,14 +6505,14 @@ def _python_exe():
     return py
 
 
-def _hidden():
+def _no_window():
     return {"creationflags": 0x08000000} if os.name == "nt" else {}      # no black console window
 
 
 def _has_package(py, name):
     try:
         r = subprocess.run([py, "-c", f"import importlib.util,sys; sys.exit(0 if importlib.util.find_spec('{name}') else 1)"],
-                           capture_output=True, timeout=60, **_hidden())
+                           capture_output=True, timeout=60, **_no_window())
         return r.returncode == 0
     except Exception:
         return False
@@ -6527,7 +6530,7 @@ def ensure_debug_packages():
     if missing:
         try:
             r = subprocess.run([py, "-m", "pip", "install", "--upgrade", *missing], capture_output=True, text=True,
-                               timeout=600, **_hidden())
+                               timeout=600, **_no_window())
             err = (r.stderr or r.stdout or "").strip().splitlines()
             err = err[-1][:150] if err else ""
         except Exception as e:
@@ -6551,7 +6554,7 @@ def _stop_debug_chrome():
                   f"$_.CommandLine -like '*{folder}*' -and $_.CommandLine -notlike '*--headless*' }} | "
                   "ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }")
             subprocess.run(["powershell.exe", "-NoProfile", "-Command", ps], capture_output=True, timeout=60,
-                           **_hidden())
+                           **_no_window())
         else:
             subprocess.run(["pkill", "-f", f"--user-data-dir={DEBUG_CHROME_DIR}"], capture_output=True, timeout=20)
     except Exception:

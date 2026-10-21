@@ -2,7 +2,9 @@
 
 This repo holds the update files for Guardian Monitor (Mac and Windows). The app's **Update** button reads `version.json`, downloads the listed files, checks each file's SHA-256 fingerprint, and installs them.
 
-Current version: **5.9**
+Current version: **5.10**
+
+5.10: Fixed the store checkers' hidden reader error (two functions had the same name). A GitHub token sent by itself in ntfy now works, and tokens are hidden in the log.
 
 5.9: Send `token github_pat_...` to your ntfy command topic and the app tests the token, saves it to github_token.txt, and switches updates to the private repo.
 
