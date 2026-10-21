@@ -454,12 +454,36 @@ def wait_for_load(win, stop, min_wait=3, max_wait=25):
     stop.wait(1)
 
 
+def _frame_text(win):
+    """Text from frames inside the tab that come from another site (a plain page read can't see those)."""
+    out = ""
+    try:
+        frames = [t for t in _get_json(CDP_PORT, "/json/list")
+                  if t.get("type") == "iframe" and t.get("parentId") == win[1] and t.get("webSocketDebuggerUrl")]
+    except Exception:
+        return ""
+    for t in frames[:5]:
+        try:
+            ws = _WS(t["webSocketDebuggerUrl"], timeout=8)
+            try:
+                r = ws.call("Runtime.evaluate", {"expression": "document.body ? document.body.innerText.slice(0, 3000) : ''",
+                                                 "returnByValue": True}, 8)
+            finally:
+                ws.close()
+            v = (r.get("result") or {}).get("value")
+            if isinstance(v, str) and v.strip():
+                out += " " + v
+        except Exception:
+            continue
+    return out
+
+
 def read_page(win):
     js = "JSON.stringify([location.href, document.title, " + W.PAGE_JS + "])"
     try:
         url, title, text = json.loads(_eval(win, js))
         W.last_js_error["text"] = ""
-        return url, title, text, False, False
+        return url, title, text + _frame_text(win), False, False
     except TabGone as e:
         W.last_js_error["text"] = str(e)
         return "", "", "", True, True

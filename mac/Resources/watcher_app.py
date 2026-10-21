@@ -23,7 +23,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs
 
 PORT = 8765
-VERSION = "4.7"   # the launcher compares this, and replaces an older copy that's still running
+VERSION = "5.1"   # the launcher compares this, and replaces an older copy that's still running
 PLATFORM = "mac"  # the Windows version switches this to "windows"
 TOKEN = secrets.token_hex(16)
 PAGE_LOAD_WAIT = 8
@@ -974,10 +974,18 @@ def wait_for_load(win, stop, min_wait=3, max_wait=25):
 
 
 # Grabs the visible page text, plus a marker if the Imperva waiting-room script is on the page.
+# Reads the visible text, plus text inside same-site frames and "shadow" page parts (which a plain
+# read skips), plus the tab title. Some waiting-room pages put their words in those places.
 PAGE_JS = (
-    "(document.body ? document.body.innerText.slice(0, 8000) : '') + "
-    "((performance.getEntriesByType('resource').some(function(e){return e.name.indexOf('SWWRGTS') > -1;})"
-    " || document.documentElement.innerHTML.indexOf('SWWRGTS') > -1) ? ' " + SCRIPT_MARK + "' : '')"
+    "(function(){var t=(document.body ? document.body.innerText.slice(0, 8000) : '');"
+    "try{var fs=document.querySelectorAll('iframe');for(var i=0;i<fs.length&&i<10;i++){try{var d=fs[i].contentDocument;"
+    "if(d&&d.body)t+=' '+d.body.innerText.slice(0,3000);}catch(e){}}}catch(e){}"
+    "try{var a=document.querySelectorAll('*');for(var j=0;j<a.length&&j<6000;j++){var r=a[j].shadowRoot;"
+    "if(r)t+=' '+(r.textContent||'').slice(0,3000);}}catch(e){}"
+    "t+=' '+(document.title||'');"
+    "if(performance.getEntriesByType('resource').some(function(e){return e.name.indexOf('SWWRGTS') > -1;})"
+    " || document.documentElement.innerHTML.indexOf('SWWRGTS') > -1){t+=' " + SCRIPT_MARK + "';}"
+    "return t;})()"
 )
 
 
@@ -1222,7 +1230,28 @@ def stopped_unexpectedly(s, why):
     send_all(s, "Guardian Monitor stopped", f"Guardian Monitor stopped: {why} It is NOT watching right now.")
 
 
-def queue_alerts(s, win, word):
+NOTICE_RX = _re.compile(r"launch|exclusive|will not be|won'?t be|only (?:be )?available|available only|store today|"
+                       r"limited quantit|per (?:customer|order)|not be releas", _re.I)
+NOT_ENGLISH_RX = _re.compile(r"\b(?:german|japanese|french|spanish|italian|korean|chinese|portuguese|dutch)[- ]language|"
+                            r"pok[eé]mon center (?:germany|uk|united kingdom|japan|france|canada|australia|europe)|"
+                            r"english tcgs? (?:will not|won'?t)|no english", _re.I)
+LANG_RX = _re.compile(r"\b(german|japanese|french|spanish|italian|korean|chinese|portuguese|dutch)[- ]language", _re.I)
+
+
+def page_notice(text):
+    """The store's banner line about what's launching (or not), if the page has one.
+    Returns (line, language) where language is e.g. "German" when it's NOT an English drop, else ""."""
+    for line in (text or "").splitlines():
+        line = line.strip()
+        if 20 < len(line) < 400 and NOTICE_RX.search(line):
+            if NOT_ENGLISH_RX.search(line):
+                m = LANG_RX.search(line)
+                return line, (m.group(1).capitalize() if m else "non-English")
+            return line, ""
+    return "", ""
+
+
+def queue_alerts(s, win, word, page_text=""):
     """Ping now, then repeat every minute until you press "I'm on it"
     (in the app OR on the phone notification), or Stop."""
     ack_event.clear()
@@ -1241,10 +1270,25 @@ def queue_alerts(s, win, word):
                      None if i else "\U0001F9EA Test from Guardian Monitor: queue alerts are working "
                      "(this was a drill, no real queue).", discord_mention_on=False, ack_button=True)
         else:
-            server_msg = None if i else discord_text(s, "discord_queue_msg")
-            send_all(s, "Pokemon Center queue is UP!",
-                     f'Pokemon Center queue is UP! Get to your Mac.{extra} (matched: "{word}")',
-                     server_msg, ack_button=True)
+            notice, lang = page_notice(page_text)
+            server_msg = None
+            if not i:
+                server_msg = discord_text(s, "discord_queue_msg")
+                if notice and lang:
+                    server_msg += (f"\n\u26A0\uFE0F **Heads-up: this is a {lang} TCG drop, NOT English.** "
+                                   f"Pokémon Center says: *{notice[:300]}*")
+                elif notice:
+                    server_msg += f"\n\u2139\uFE0F Pokémon Center says: *{notice[:300]}*"
+            if lang:
+                title = f"PKC queue is UP ({lang} TCG, NOT English)"
+                body = (f"Pokemon Center queue is UP, but it's a {lang} TCG drop, not English. "
+                        f"Get to your Mac.{extra} Site says: {notice[:200]}")
+            else:
+                title = "Pokemon Center queue is UP!"
+                body = f'Pokemon Center queue is UP! Get to your Mac.{extra} (matched: "{word}")'
+                if notice:
+                    body += f" Site says: {notice[:200]}"
+            send_all(s, title, body, server_msg, ack_button=True)
         # Wait for the next reminder, checking the phone button every few seconds.
         deadline = time.time() + REPEAT_EVERY
         while time.time() < deadline and not ack_event.is_set() and not stop_event.is_set():
@@ -1301,7 +1345,7 @@ def watch_hidden(s, stop, win, queue_words, block_words, headsup_words):
                     win, _ = open_window(s["watch_url"])
             if win:
                 go_to(win, s["watch_url"])          # one refresh puts YOU in line, in your Chrome
-            queue_alerts(s, win, word)
+            queue_alerts(s, win, word, d.get("text", ""))
             return
         word = find_word(blob, block_words)
         if word:
@@ -1495,7 +1539,7 @@ def watch(s, stop):
                 if word:
                     if word == SCRIPT_MARK:
                         word = "waiting-room script on page"
-                    queue_alerts(s, win, word)
+                    queue_alerts(s, win, word, text)
                     return
 
                 word = find_word(blob, block_words)
@@ -1523,6 +1567,8 @@ def watch(s, stop):
                                  discord_mention_on=False)
                 else:
                     log(f"Check #{checks}: no queue.")
+                    if checks % 10 == 1 or len(text or "") < 300:
+                        log(f'  (read {len(text or "")} characters, tab "{(title or url or "no title")[:50]}")')
                 if not login_checked and not text_blocked:
                     login_checked = True
                     check_sign_in(win, s, text, stop)
