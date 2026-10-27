@@ -5,7 +5,7 @@
  * No webhooks or secrets in here – those live only in the loader (in your Google account).
  * CONFIG is passed in by the loader: { WEBHOOK_URL, AMAZON_ROLE_ID, POKEMON_ROLE_ID, BOT_NAME }
  */
-const BOT_VERSION = '1.0';
+const BOT_VERSION = '1.1';
 const SEARCH = 'from:keepa.com newer_than:2d';
 
 // Every tracked product: ASIN -> [name, MSRP]
@@ -79,8 +79,8 @@ const PRODUCTS = {
   B0H7FDBNSB: ['30th Celebration Knock Out Collection', 9.99],
   B0H7FR54KK: ['30th Celebration Battle Deck', 19.99],
   B0H8SXPN9P: ['30th Celebration 2-Pack Blister', 9.99],
-  B0GW2DK37Q: ['First Partner Illustration Collection—Series 2', 29.99],
-  B0H2JVZYZZ: ['First Partner Illustration Collection—Series 3', 29.99]
+  B0GW2DK37Q: ['First Partner Illustration Collection—Series 2', 14.99],
+  B0H2JVZYZZ: ['First Partner Illustration Collection—Series 3', 14.99]
 };
 
 function setup() {
@@ -127,11 +127,13 @@ function checkKeepa() {
     const name = 'Pokémon TCG: ' + info[0];
     const msrp = info[1];
 
-    // The real price from the email: the lowest price at or under MSRP (+$1 rounding room).
+    // Same rule as the store bots: alert up to $10 over MSRP, but never more than 25% over.
+    const cap = maxPrice_(msrp);
     const prices = (body.match(/\$\s?\d{1,4}(?:,\d{3})*\.\d{2}/g) || [])
       .map(p => parseFloat(p.replace(/[$,\s]/g, '')))
-      .filter(p => p > 0 && (msrp === null || p <= msrp + 1));
-    const price = prices.length ? Math.min.apply(null, prices) : msrp;
+      .filter(p => p > 0 && p <= cap);
+    if (!prices.length) return;                // over the price limit (or no price found): no alert
+    const price = Math.min.apply(null, prices);
 
     const roles = [CONFIG.AMAZON_ROLE_ID, CONFIG.POKEMON_ROLE_ID].filter(r => /^\d+$/.test(r || ''));
     post_({
@@ -159,6 +161,10 @@ function post_(payload) {
     method: 'post', contentType: 'application/json',
     payload: JSON.stringify(payload), muteHttpExceptions: true
   });
+}
+
+function maxPrice_(msrp) {   // MSRP + the smaller of $10 or 25% of MSRP
+  return Math.round((msrp + Math.min(10, msrp * 0.25)) * 100) / 100;
 }
 
 function unique_(a) { return a.filter((x, i) => a.indexOf(x) === i); }
