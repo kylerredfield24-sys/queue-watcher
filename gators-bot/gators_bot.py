@@ -39,22 +39,25 @@ SINGLES_ROLE = "".join(c for c in (os.environ.get("GATORS_SINGLES_ROLE") or ROLE
 BOT_PIC = "https://raw.githubusercontent.com/kylerredfield24-sys/queue-watcher/main/assets/guardian.png"
 
 
+RETRY_CODES = (403, 408, 425, 429, 430, 500, 502, 503, 504, 520, 521, 522, 524)   # 430 = Shopify "slow down"
+
+
 def get_json(url):
+    """Read a JSON page, retrying through the store's short hiccups (busy, rate limits, timeouts)."""
     req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": "application/json"})
-    for attempt in range(3):
+    waits = [4, 10, 20]
+    for attempt in range(len(waits) + 1):
         try:
             with urllib.request.urlopen(req, timeout=30) as r:
                 return json.loads(r.read().decode("utf-8"))
         except urllib.error.HTTPError as e:
-            if e.code in (429, 500, 502, 503) and attempt < 2:
-                time.sleep(5 * (attempt + 1))
-                continue
-            raise
-        except urllib.error.URLError:
-            if attempt < 2:
-                time.sleep(5)
-                continue
-            raise
+            if e.code not in RETRY_CODES or attempt == len(waits):
+                raise
+        except (urllib.error.URLError, TimeoutError, ConnectionError, ValueError):
+            # ValueError = the store sent a busy/challenge page instead of JSON
+            if attempt == len(waits):
+                raise
+        time.sleep(waits[attempt])
 
 
 def store_products(collections=None, singles=False):
@@ -186,6 +189,14 @@ def post(payload, hook=None):
             if e.code == 429 and attempt < 2:
                 time.sleep(float(e.headers.get("Retry-After", "2")) + 0.5)
                 continue
+            if e.code >= 500 and attempt < 2:
+                time.sleep(3)
+                continue
+            raise
+        except (urllib.error.URLError, TimeoutError, ConnectionError):
+            if attempt < 2:
+                time.sleep(3)
+                continue
             raise
 
 
@@ -242,7 +253,16 @@ def main():
     if test and not WEBHOOK:
         print("TEST FAILED: the DISCORD_WEBHOOK secret is missing. Add it in Settings -> Secrets -> Actions.")
         return 1
-    sealed = store_products()
+    try:
+        sealed = store_products()
+    except Exception as e:
+        if test:
+            print(f"TEST FAILED: couldn't read Gator's website ({e}).")
+            return 1
+        # Their site had a hiccup. Skip this check (nothing is forgotten) and try again in a few minutes,
+        # instead of failing the run and emailing you.
+        print(f"::warning::Gator's website didn't answer this time ({e}). Skipping this check; the next one is in a few minutes.")
+        return 0
     if not sealed:
         print("The store returned no products; keeping the old list.")
         return 1 if test else 0
