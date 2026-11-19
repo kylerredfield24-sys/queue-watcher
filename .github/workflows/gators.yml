@@ -2,7 +2,7 @@ name: Guardian Monitor - Gator's restock watch
 
 on:
   schedule:
-    - cron: "*/5 * * * *"      # every 5 minutes (GitHub sometimes runs it a little late)
+    - cron: "*/5 * * * *"      # GitHub often runs this hours late, so each run keeps checking for ~5.5 hours
   workflow_dispatch:              # "Run workflow" button for a manual check
     inputs:
       test:
@@ -14,14 +14,15 @@ on:
         type: boolean
         default: false
 
-concurrency:
-  group: gators-watch
+concurrency:                     # the next run waits its turn, then takes over right away;
+                                 # test/resend posts skip the line
+  group: ${{ (github.event.inputs.test == 'true' || github.event.inputs.resend == 'true') && 'gators-manual' || 'gators-watch' }}
   cancel-in-progress: false
 
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    timeout-minutes: 350
     steps:
       - uses: actions/checkout@v4
         with:
@@ -40,6 +41,8 @@ jobs:
           GATORS_SINGLES_ROLE: ${{ vars.GATORS_SINGLES_ROLE }}
           GATORS_TEST: ${{ github.event.inputs.test || 'false' }}
           GATORS_RESEND: ${{ github.event.inputs.resend || 'false' }}
+          GATORS_LOOP_MINUTES: "330"     # keep checking every ~3 min for 5.5 hours
+          PYTHONUNBUFFERED: "1"
         run: python3 gators-bot/gators_bot.py
       - name: Save what's in stock now
         if: always() && github.event.inputs.test != 'true' && github.event.inputs.resend != 'true'

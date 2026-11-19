@@ -319,7 +319,7 @@ def main():
     if first_singles:
         hello(f"Now watching {len(singles)} Pokémon singles at Gator's Card Den too. Every new card they list "
               "will be posted here.", s_hook)
-    if not found and os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch":
+    if not found and os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch" and not os.environ.get("GATORS_QUIET"):
         hello(f"Checked {len(sealed)} sealed products ({in_stock(sealed)} in stock)"
               + (f" and {len(singles)} singles" if singles else "")
               + ". Nothing new since the last check. It keeps checking every few minutes.")
@@ -339,5 +339,26 @@ def main():
     return 0
 
 
+def watch(minutes):
+    """Keep checking for `minutes`, every ~2.5-4 min, so the watch doesn't depend on GitHub's spotty schedule."""
+    import random
+    end = time.time() + minutes * 60
+    n = 0
+    while True:
+        n += 1
+        try:
+            main()
+        except Exception as e:                       # one bad check never ends the watch
+            print(f"::warning::Check {n} hit a problem ({e}); trying again next check.", flush=True)
+        os.environ["GATORS_QUIET"] = "1"             # the "nothing new" note only goes out once per run
+        wait = random.uniform(150, 240)
+        if time.time() + wait > end:
+            print(f"Done: {n} checks this run. The next run picks up from here.")
+            return 0
+        time.sleep(wait)
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    loop = float(os.environ.get("GATORS_LOOP_MINUTES") or 0)
+    one_off = os.environ.get("GATORS_TEST") == "true" or os.environ.get("GATORS_RESEND") == "true"
+    sys.exit(watch(loop) if loop > 0 and not one_off else main())
